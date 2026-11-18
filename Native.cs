@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -34,7 +37,18 @@ internal static class Native
     [ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IShellItemImageFactory { [PreserveSig] int GetImage(SIZE size, uint flags, out IntPtr bitmap); }
 
-    private static readonly Dictionary<string, ImageSource?> IconCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, ImageSource?> IconCache = new(StringComparer.OrdinalIgnoreCase);
+    public static Task WarmIconsAsync(IEnumerable<Entry> entries)
+    {
+        var paths = entries.Where(x => !x.IsFolder).Select(x => string.IsNullOrEmpty(x.IconPath) ? x.Target : x.IconPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { foreach (string path in paths) Icon(path); completion.SetResult(); }
+            catch (Exception error) { completion.SetException(error); }
+        }) { IsBackground = true, Name = "Orbit icon loader" };
+        thread.SetApartmentState(ApartmentState.STA); thread.Start(); return completion.Task;
+    }
     public static ImageSource? Icon(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;

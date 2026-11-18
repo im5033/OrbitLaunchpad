@@ -61,6 +61,10 @@ public static class SelfTests
             var parent = new Entry { IsFolder = true };
             items.Add(parent);
             Check(LayoutRules.Group(items, folder.Id, parent.Id) == null, "folder nesting rejected");
+            var reference = GridLayout.Reference(2560, 1440, new Preferences { IconSize = 120, Columns = 7, Rows = 4 });
+            Check(Math.Abs(reference.Left + reference.CellWidth * .5 - 380) < .01 && Math.Abs(reference.Top - 75) < .01 && Math.Abs(reference.CellWidth - 300) < .01 && Math.Abs(reference.CellHeight - 247.5) < .01 && Math.Abs(reference.IconSize - 150) < .01, "reference screenshot geometry: 7 columns, icon size, row pitch, and margins");
+            var fifth = reference.TilePosition(11, 7, 204);
+            Check(reference.IndexAt(new Point(fifth.X + 102, fifth.Y + 75), 7, 0, 28) == 11, "drag hit testing follows reference grid at scaled resolutions");
             string testDirectory = Path.Combine(AppContext.BaseDirectory, "test-data-" + Guid.NewGuid().ToString("N"));
             var store = new Store(testDirectory);
             store.Library.Items = items; store.Library.Initialized = true; store.Save();

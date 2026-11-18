@@ -75,6 +75,7 @@ internal sealed class IconTile : Border
     private readonly TranslateTransform _move = new();
     private readonly Border _face;
     private readonly ScaleTransform _scale = new(1, 1);
+    private bool _hovering, _armed;
     public double IconSize { get; }
     public IconTile(Entry entry, double iconSize)
     {
@@ -82,21 +83,21 @@ internal sealed class IconTile : Border
         Width = iconSize + 54; Height = iconSize + 58; Background = Brushes.Transparent;
         RenderTransform = _move; Cursor = System.Windows.Input.Cursors.Hand; ToolTip = entry.IsFolder ? entry.Name + " · " + entry.Children.Count + " 個項目" : entry.Name + "\n" + entry.Target;
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
-        _face = new Border { Width = iconSize, Height = iconSize, CornerRadius = new CornerRadius(iconSize * .23), RenderTransform = _scale, RenderTransformOrigin = new Point(.5, .5), BorderThickness = new Thickness(2) };
+        double faceSize = entry.IsFolder ? iconSize * .82 : iconSize;
+        _face = new Border { Width = faceSize, Height = faceSize, CornerRadius = new CornerRadius(faceSize * .18), RenderTransform = _scale, RenderTransformOrigin = new Point(.5, .5), BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         if (entry.IsFolder)
         {
-            _face.Background = new SolidColorBrush(Color.FromArgb(155, 164, 177, 207));
-            var preview = new System.Windows.Controls.Primitives.UniformGrid { Rows = 3, Columns = 3, Margin = new Thickness(9) };
-            foreach (var child in entry.Children.Take(9)) preview.Children.Add(Visual(child, (iconSize - 24) / 3));
+            _face.Background = new SolidColorBrush(Color.FromRgb(128, 134, 138));
+            var preview = new System.Windows.Controls.Primitives.UniformGrid { Rows = 3, Columns = 3, Margin = new Thickness(faceSize * .09) };
+            foreach (var child in entry.Children.Take(9)) preview.Children.Add(Visual(child, faceSize * .205));
             for (int i = preview.Children.Count; i < 9; i++) preview.Children.Add(new Border());
             _face.Child = preview;
         }
-        else _face.Child = Visual(entry, iconSize - 4);
-        stack.Children.Add(_face);
+        else _face.Child = Visual(entry, iconSize);
+        stack.Children.Add(new Grid { Width = iconSize, Height = iconSize, Children = { _face } });
         var label = Theme.Label(entry.Name, 12.5); label.TextAlignment = TextAlignment.Center;
         label.TextWrapping = TextWrapping.Wrap; label.TextTrimming = TextTrimming.CharacterEllipsis;
-        label.MaxHeight = 36; label.MaxWidth = Width - 8; label.Margin = new Thickness(0, 9, 0, 0);
-        label.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Black, BlurRadius = 5, ShadowDepth = 1, Opacity = .8 };
+        label.MaxHeight = 36; label.MaxWidth = Width - 8; label.Margin = new Thickness(0, 10, 0, 0);
         stack.Children.Add(label); Child = stack;
         MouseEnter += (_, _) => { if (System.Windows.Input.Mouse.LeftButton == System.Windows.Input.MouseButtonState.Released) { Theme.Animate(_scale, ScaleTransform.ScaleXProperty, 1.045, 130); Theme.Animate(_scale, ScaleTransform.ScaleYProperty, 1.045, 130); } };
         MouseLeave += (_, _) => { Theme.Animate(_scale, ScaleTransform.ScaleXProperty, 1, 130); Theme.Animate(_scale, ScaleTransform.ScaleYProperty, 1, 130); };
@@ -116,6 +117,7 @@ internal sealed class IconTile : Border
     public void MoveTo(Point point, bool animate, double ms)
     {
         double x = Canvas.GetLeft(this), y = Canvas.GetTop(this);
+        if (!double.IsNaN(x) && !double.IsNaN(y) && Position == point && animate) return;
         if (double.IsNaN(x)) x = point.X; if (double.IsNaN(y)) y = point.Y;
         double oldX = x + _move.X, oldY = y + _move.Y;
         _move.BeginAnimation(TranslateTransform.XProperty, null); _move.BeginAnimation(TranslateTransform.YProperty, null);
@@ -125,7 +127,15 @@ internal sealed class IconTile : Border
     }
     public void MergeHint(bool hovering, bool armed)
     {
+        if (_hovering == hovering && _armed == armed) return;
+        _hovering = hovering; _armed = armed;
         _face.Opacity = hovering ? .57 : 1;
         _face.BorderBrush = armed ? Theme.Accent : Brushes.Transparent;
+        _face.BorderThickness = armed ? new Thickness(2) : new Thickness(0);
+    }
+    public void Follow(Point point)
+    {
+        Canvas.SetLeft(this, 0); Canvas.SetTop(this, 0);
+        _move.X = point.X; _move.Y = point.Y;
     }
 }

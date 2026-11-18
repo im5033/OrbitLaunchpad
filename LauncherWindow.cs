@@ -18,6 +18,7 @@ namespace Orbit;
 public sealed class LauncherWindow : Window
 {
     private readonly Store _store;
+    private readonly FrameMeter _meter;
     private Preferences Prefs => _store.Library.Preferences;
     private readonly Grid _surface = new();
     private readonly Grid _scene = new() { Background = Brushes.Transparent };
@@ -30,8 +31,14 @@ public sealed class LauncherWindow : Window
     private readonly StackPanel _pager = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly Dictionary<string, IconTile> _tiles = new();
     private readonly Dictionary<string, Point> _slots = new();
+    private readonly Dictionary<string, Point> _rootSlots = new();
+    private readonly Dictionary<string, (string Signature, IconTile Tile)> _tileCache = new();
+    private string _rootViewKey = "";
+    private bool _ready, _layoutDirty = true;
+    private Point _pendingDragPoint, _lastDragPoint;
     private Entry? _folder;
     private Border? _folderPanel;
+    private TextBox? _folderTitle;
     private Canvas? _folderItems;
     private Point _folderOrigin;
     private ScaleTransform? _folderScale;
@@ -57,12 +64,15 @@ public sealed class LauncherWindow : Window
     public LauncherWindow(Store store)
     {
         _store = store;
+        _meter = new FrameMeter(store.DirectoryPath);
         Title = "Orbit Launchpad"; Background = new SolidColorBrush(Color.FromRgb(10, 13, 27));
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = true;
         Topmost = true; AllowsTransparency = false;
+        Opacity = 0;
         FontFamily = new FontFamily("Segoe UI, Microsoft JhengHei UI"); Foreground = Theme.Text;
         Icon = Native.Icon(Path.Combine(AppContext.BaseDirectory, "orbit.ico"));
         Content = _surface;
+        RenderOptions.SetBitmapScalingMode(_surface, BitmapScalingMode.LowQuality);
         BuildBackground();
         _surface.Children.Add(_scene); _scene.Children.Add(_canvas);
         BuildChrome();
@@ -86,11 +96,11 @@ public sealed class LauncherWindow : Window
         LostMouseCapture += (_, _) => { if (_dragging) CancelDrag(); };
         PreviewKeyDown += HandleKey;
         MouseWheel += (_, e) => { if (!_dragging && !_modal) { ChangePage(e.Delta < 0 ? 1 : -1); e.Handled = true; } };
-        SizeChanged += (_, _) => { if (_loaded) { CancelDrag(); Refresh(false); } };
+        SizeChanged += (_, _) => { _layoutDirty = true; if (_ready && IsVisible && !_transitioning && !_hiding) { CancelDrag(); Refresh(false); } };
         SourceInitialized += (_, _) => InitializeNative();
         Loaded += async (_, _) =>
         {
-            _loaded = true; PositionOnScreen(); Refresh(false); AnimateOpen();
+            _meter.Begin("initial-open"); _loaded = true; PositionOnScreen();
             if (!_store.Library.Initialized)
             {
                 _status.Text = "正在讀取開始功能表與桌面捷徑…";
@@ -98,9 +108,12 @@ public sealed class LauncherWindow : Window
                 if (_quitting) return;
                 // Initial suggestions are copies of shortcuts; their original files are never modified.
                 _store.Library.Items.AddRange(shortcuts.Take(Capacity));
-                _store.Library.Initialized = true; Save(); Refresh(false);
-                _status.Text = "已加入 " + _store.Library.Items.Count + " 個捷徑 · 右上角「＋」可繼續添加";
+                _store.Library.Initialized = true; Save();
             }
+            await Native.WarmIconsAsync(LayoutRules.All(_store.Library.Items));
+            if (_quitting) return;
+            _scene.UpdateLayout(); Refresh(false); _ready = true;
+            AnimateOpen();
             if (store.LoadWarning != null) Toast(store.LoadWarning);
         };
         Closing += (_, e) => { if (!_quitting) { e.Cancel = true; HideLauncher(); } };
@@ -111,15 +124,11 @@ public sealed class LauncherWindow : Window
 
     private void BuildBackground()
     {
-        string wallpaper = Native.Wallpaper();
-        if (File.Exists(wallpaper))
+        var backdrop = Backdrop.Create(Native.Wallpaper());
+        if (backdrop != null)
         {
-            try
-            {
-                var bitmap = new BitmapImage(); bitmap.BeginInit(); bitmap.UriSource = new Uri(wallpaper); bitmap.CacheOption = BitmapCacheOption.OnLoad; bitmap.DecodePixelWidth = 2400; bitmap.EndInit(); bitmap.Freeze();
-                _surface.Children.Add(new Image { Source = bitmap, Stretch = Stretch.UniformToFill, IsHitTestVisible = false, Opacity = .62, Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 16 } });
-            }
-            catch { }
+            _surface.Children.Add(new Image { Source = backdrop, Stretch = Stretch.UniformToFill, IsHitTestVisible = false });
+            return;
         }
         _surface.Children.Add(new Border
         {
@@ -132,27 +141,22 @@ public sealed class LauncherWindow : Window
     }
     private void BuildChrome()
     {
-        var heading = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(35, 29, 0, 0) };
-        var logo = Theme.Label("◉", 23, Theme.Accent); heading.Children.Add(logo);
-        var brand = Theme.Label("ORBIT", 13); brand.Margin = new Thickness(10, 0, 0, 0); brand.FontWeight = FontWeights.SemiBold; heading.Children.Add(brand);
-        _scene.Children.Add(heading);
-        var searchFrame = new Border { Width = 310, Height = 42, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 26, 0, 0), CornerRadius = new CornerRadius(13), Background = new SolidColorBrush(Color.FromArgb(115, 45, 53, 76)) };
-        var searchGrid = new Grid(); searchGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) }); searchGrid.ColumnDefinitions.Add(new ColumnDefinition());
-        var glass = Theme.Label("⌕", 25, Theme.Muted); glass.HorizontalAlignment = HorizontalAlignment.Center; searchGrid.Children.Add(glass);
-        _search.BorderThickness = new Thickness(0); _search.Background = Brushes.Transparent; _search.Padding = new Thickness(0, 5, 12, 5); _search.ToolTip = "搜尋名稱（Ctrl+F）";
-        Grid.SetColumn(_search, 1); searchGrid.Children.Add(_search);
-        var placeholder = Theme.Label("搜尋程式與資料夾", 13, Theme.Muted); placeholder.IsHitTestVisible = false; Grid.SetColumn(placeholder, 1); searchGrid.Children.Add(placeholder);
+        var searchFrame = new Border { Width = 250, Height = 24, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 18, 0, 0), CornerRadius = new CornerRadius(5), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Color.FromRgb(91, 100, 103)), Background = new SolidColorBrush(Color.FromArgb(175, 34, 41, 44)) };
+        var searchGrid = new Grid();
+        _search.BorderThickness = new Thickness(0); _search.Background = Brushes.Transparent; _search.Padding = new Thickness(5, 0, 5, 0); _search.FontSize = 12; _search.HorizontalContentAlignment = HorizontalAlignment.Center; _search.ToolTip = "搜尋名稱（Ctrl+F）";
+        searchGrid.Children.Add(_search);
+        var placeholder = Theme.Label("⌕ 搜尋", 12, Theme.Muted); placeholder.HorizontalAlignment = HorizontalAlignment.Center; placeholder.IsHitTestVisible = false; searchGrid.Children.Add(placeholder);
         _search.TextChanged += (_, _) => { placeholder.Visibility = _search.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; _page = 0; if (_folder != null) CloseFolder(true); if (_loaded) Refresh(false); };
         searchFrame.Child = searchGrid; _scene.Children.Add(searchFrame);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 25, 28, 0) };
-        var add = Theme.Button("＋ 添加", (_, _) => ShowAdd());
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 12, 20, 0) };
         var settings = Theme.Button("⋯", (_, _) => { var menu = SettingsMenu(); menu.PlacementTarget = actions; menu.IsOpen = true; });
-        actions.Children.Add(add); actions.Children.Add(settings); _scene.Children.Add(actions);
-        var bottom = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(30, 0, 30, 23) };
-        bottom.Children.Add(_pager);
-        _status.HorizontalAlignment = HorizontalAlignment.Center; _status.Margin = new Thickness(0, 12, 0, 8); bottom.Children.Add(_status);
-        var hint = Theme.Label("Ctrl + Alt + Space 喚出  ·  拖曳換位  ·  重疊停留以成組  ·  Esc 返回", 11, Theme.Muted);
-        hint.HorizontalAlignment = HorizontalAlignment.Center; bottom.Children.Add(hint); _scene.Children.Add(bottom);
+        settings.MinHeight = 24; settings.Height = 24; settings.Padding = new Thickness(8, 0, 8, 0); settings.Background = Brushes.Transparent; settings.Foreground = Theme.Muted; settings.Opacity = .45; settings.ToolTip = "添加、設定與結束 Orbit";
+        settings.MouseLeave += (_, _) => settings.Opacity = .45;
+        actions.Children.Add(settings); _scene.Children.Add(actions);
+        _pager.VerticalAlignment = VerticalAlignment.Bottom;
+        _scene.Children.Add(_pager);
+        _status.HorizontalAlignment = HorizontalAlignment.Center; _status.VerticalAlignment = VerticalAlignment.Bottom;
+        _status.Margin = new Thickness(20, 0, 20, 45); _status.Visibility = Visibility.Collapsed; _scene.Children.Add(_status);
     }
     private void InitializeNative()
     {
@@ -182,30 +186,62 @@ public sealed class LauncherWindow : Window
     }
     public void Toggle()
     {
-        if (_modal || _transitioning || _hiding) return;
+        if (!_ready || _modal || _transitioning || _hiding) return;
         if (IsVisible) HideLauncher();
         else
         {
-            PositionOnScreen(); Show(); Activate(); _search.Text = ""; Refresh(false); AnimateOpen(); Keyboard.Focus(_scene);
+            _meter.Begin("open"); _transitioning = true;
+            BeginAnimation(OpacityProperty, null); Opacity = 0;
+            _surface.Children.Remove(_scene); _surface.Children.Insert(1, _scene);
+            PositionOnScreen(); Show(); Activate();
+            if (Searching) _search.Clear();
+            if (_layoutDirty) { _scene.UpdateLayout(); Refresh(false); }
+            AnimateOpen(); Keyboard.Focus(_scene);
         }
     }
-    private void AnimateOpen()
+    private static async Task PrepareVisual(FrameworkElement visual)
     {
-        Opacity = 0; var scale = new ScaleTransform(1.06, 1.06); _scene.RenderTransform = scale; _scene.RenderTransformOrigin = new Point(.5, .5);
-        Theme.Animate(this, OpacityProperty, 1, Prefs.AnimationMs);
+        // Complete layout before starting clocks. Static image and tile-object caches
+        // keep shell icon decoding and control construction out of the animation.
+        visual.UpdateLayout();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler? next = null;
+        next = (_, _) => { CompositionTarget.Rendering -= next; ready.TrySetResult(); };
+        CompositionTarget.Rendering += next;
+        await ready.Task;
+        await visual.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+    }
+    private async void AnimateOpen()
+    {
+        _transitioning = true;
+        var scale = new ScaleTransform(1.04, 1.04); _scene.RenderTransform = scale; _scene.RenderTransformOrigin = new Point(.5, .5);
+        _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1;
+        await PrepareVisual(_scene);
+        if (!IsVisible || _quitting) { _transitioning = false; return; }
+        _meter.AnimationStarted();
+        Theme.Animate(this, OpacityProperty, 1, Prefs.AnimationMs, () =>
+        {
+            BeginAnimation(OpacityProperty, null); Opacity = 1;
+            _scene.InvalidateVisual(); _canvas.InvalidateVisual();
+            _transitioning = false; _meter.End();
+        });
         Theme.Animate(scale, ScaleTransform.ScaleXProperty, 1, Prefs.AnimationMs);
         Theme.Animate(scale, ScaleTransform.ScaleYProperty, 1, Prefs.AnimationMs);
     }
-    private void HideLauncher()
+    private async void HideLauncher()
     {
         if (_modal || _hiding) return;
-        CancelDrag(); CloseFolder(true); _hiding = true;
+        if (_transitioning) return;
+        _meter.Begin("close"); CancelDrag(); CloseFolder(true); _hiding = true;
+        await PrepareVisual(_scene);
+        if (_quitting) return;
+        _meter.AnimationStarted();
         if (_scene.RenderTransform is ScaleTransform scale)
         {
             Theme.Animate(scale, ScaleTransform.ScaleXProperty, 1.045, Prefs.AnimationMs * .75);
             Theme.Animate(scale, ScaleTransform.ScaleYProperty, 1.045, Prefs.AnimationMs * .75);
         }
-        Theme.Animate(this, OpacityProperty, 0, Prefs.AnimationMs * .75, () => { Hide(); _hiding = false; });
+        Theme.Animate(this, OpacityProperty, .001, Prefs.AnimationMs * .75, () => { Hide(); BeginAnimation(OpacityProperty, null); Opacity = 1; _hiding = false; _meter.End(); });
     }
     private void Quit()
     {
@@ -231,16 +267,28 @@ public sealed class LauncherWindow : Window
         var all = VisibleRoot().ToList();
         _page = Math.Clamp(_page, 0, Math.Max(0, (all.Count - 1) / Capacity));
         var visible = all.Skip(_page * Capacity).Take(Capacity).ToList();
+        string viewKey = $"{ActualWidth:F2}:{ActualHeight:F2}:{Prefs.Columns}:{Prefs.Rows}:{Prefs.IconSize}:{_page}:{_search.Text}:" + string.Join("|", visible.Select(EntrySignature));
+        if (!_layoutDirty && viewKey == _rootViewKey)
+        {
+            _tiles.Clear(); _slots.Clear();
+            foreach (var tile in _canvas.Children.OfType<IconTile>())
+            {
+                _tiles[tile.Entry.Id] = tile; _slots[tile.Entry.Id] = _rootSlots[tile.Entry.Id];
+                tile.Opacity = 1; tile.MergeHint(false, false); tile.MoveTo(_rootSlots[tile.Entry.Id], animate, Prefs.AnimationMs);
+            }
+            _status.Text = Searching ? all.Count + " 個搜尋結果" : all.Count + " 個項目 · 第 " + (_page + 1) + " 頁";
+            return;
+        }
+        _rootViewKey = viewKey; _layoutDirty = false; _rootSlots.Clear();
         _tiles.Clear(); _slots.Clear(); _canvas.Children.Clear();
-        double cellW = Math.Max(90, (ActualWidth - 100) / Prefs.Columns);
-        double availableH = Math.Max(180, ActualHeight - 220);
-        double cellH = availableH / Prefs.Rows;
-        double icon = Math.Min(Prefs.IconSize, Math.Min(cellW - 58, cellH - 62)); icon = Math.Max(40, icon);
+        var layout = GridLayout.Reference(ActualWidth, ActualHeight, Prefs);
+        _pager.Margin = new Thickness(0, 0, 0, ActualHeight * .08);
+        double icon = layout.IconSize;
         for (int i = 0; i < visible.Count; i++)
         {
             var tile = CreateTile(visible[i], icon); _canvas.Children.Add(tile); _tiles[tile.Entry.Id] = tile;
-            Point point = new(50 + cellW * (i % Prefs.Columns) + (cellW - tile.Width) / 2, 110 + cellH * (i / Prefs.Columns) + Math.Max(0, (cellH - tile.Height) / 2));
-            _slots[tile.Entry.Id] = point; tile.MoveTo(point, animate, Prefs.AnimationMs);
+            Point point = layout.TilePosition(i, Prefs.Columns, tile.Width);
+            _slots[tile.Entry.Id] = point; _rootSlots[tile.Entry.Id] = point; tile.MoveTo(point, animate, Prefs.AnimationMs);
         }
         if (all.Count == 0)
         {
@@ -252,6 +300,15 @@ public sealed class LauncherWindow : Window
     }
     private IconTile CreateTile(Entry entry, double icon)
     {
+        string cacheKey = (_folder == null ? "root:" : "folder:") + entry.Id + ":" + icon.ToString("F2");
+        string signature = EntrySignature(entry);
+        if (_tileCache.TryGetValue(cacheKey, out var cached) && cached.Signature == signature)
+        {
+            var reused = cached.Tile;
+            if (reused.Parent is Panel parent) parent.Children.Remove(reused);
+            reused.Opacity = 1; reused.MergeHint(false, false); reused.ContextMenu = ItemMenu(entry);
+            return reused;
+        }
         var tile = new IconTile(entry, icon);
         tile.MouseLeftButtonDown += (_, e) =>
         {
@@ -260,20 +317,22 @@ public sealed class LauncherWindow : Window
         };
         tile.ContextMenu = ItemMenu(entry);
         tile.ContextMenuOpening += (_, _) => { _pressed = null; if (_dragging) CancelDrag(); };
+        _tileCache[cacheKey] = (signature, tile);
         return tile;
     }
+    private static string EntrySignature(Entry entry) => entry.Id + ":" + entry.Name + ":" + entry.Target + ":" + entry.IconPath + ":" + entry.Children.Count + ":" + string.Join(",", entry.Children.Take(9).Select(x => x.Id + x.Name + x.IconPath + x.Target));
     private void BuildPager(StackPanel panel, int count, int capacity, int page, Action<int> change)
     {
         panel.Children.Clear(); int pages = Math.Max(1, (count + capacity - 1) / capacity);
-        if (pages <= 1) return;
-        var previous = Theme.Button("‹", (_, _) => change(Math.Max(0, page - 1))); panel.Children.Add(previous);
         for (int i = Math.Max(0, page - 3); i < Math.Min(pages, page + 4); i++)
         {
             int index = i;
-            var button = Theme.Button((i + 1).ToString(), (_, _) => change(index), i == page);
-            button.Padding = new Thickness(11, 5, 11, 5); button.MinHeight = 30; panel.Children.Add(button);
+            var button = Theme.Button("●", (_, _) => change(index));
+            button.ToolTip = "第 " + (i + 1) + " 頁"; button.Background = Brushes.Transparent;
+            button.Foreground = i == page ? Brushes.White : new SolidColorBrush(Color.FromRgb(100, 106, 119));
+            button.Padding = new Thickness(0); button.Margin = new Thickness(3, 0, 3, 0); button.Width = 14; button.MinHeight = 16; button.Height = 16; button.FontSize = 10;
+            panel.Children.Add(button);
         }
-        panel.Children.Add(Theme.Button("›", (_, _) => change(Math.Min(pages - 1, page + 1))));
     }
     private void ChangePage(int delta)
     {
@@ -286,9 +345,10 @@ public sealed class LauncherWindow : Window
         else { _page = Math.Clamp(_page + delta, 0, Math.Max(0, (VisibleRoot().Count() - 1) / Capacity)); Refresh(false); }
     }
     private int FolderCapacity() => Prefs.Columns * Math.Max(1, Prefs.Rows - 1);
-    private void OpenFolder(Entry folder, IconTile? origin)
+    private async void OpenFolder(Entry folder, IconTile? origin)
     {
         if (_transitioning || _folder != null) return;
+        _meter.Begin("folder-open");
         _folderOrigin = origin != null ? origin.TranslatePoint(new Point(origin.Width / 2, origin.IconSize / 2), _surface) : new Point(ActualWidth / 2, ActualHeight / 2);
         _folder = folder; _folderPage = 0; _transitioning = true;
         _shade.Visibility = Visibility.Visible; _shade.Opacity = 0; _folderLayer.Visibility = Visibility.Visible;
@@ -298,50 +358,57 @@ public sealed class LauncherWindow : Window
         _folderTranslate.Y = _folderOrigin.Y - ActualHeight / 2;
         var group = new TransformGroup(); group.Children.Add(_folderScale); group.Children.Add(_folderTranslate);
         _folderPanel!.RenderTransformOrigin = new Point(.5, .5); _folderPanel.RenderTransform = group;
-        _folderPanel.Opacity = .35;
+        _folderPanel.Opacity = .001;
+        if (_folderTitle != null) _folderTitle.Opacity = .001;
+        await PrepareVisual(_folderPanel);
+        if (_folder != folder || _quitting) return;
+        _meter.AnimationStarted();
         Theme.Animate(_canvas, OpacityProperty, .12, Prefs.AnimationMs);
         Theme.Animate(_shade, OpacityProperty, 1, Prefs.AnimationMs);
         Theme.Animate(_folderPanel, OpacityProperty, 1, Prefs.AnimationMs);
+        if (_folderTitle != null) Theme.Animate(_folderTitle, OpacityProperty, 1, Prefs.AnimationMs);
         Theme.Animate(_folderScale, ScaleTransform.ScaleXProperty, 1, Prefs.AnimationMs);
         Theme.Animate(_folderScale, ScaleTransform.ScaleYProperty, 1, Prefs.AnimationMs);
         Theme.Animate(_folderTranslate, TranslateTransform.XProperty, 0, Prefs.AnimationMs);
-        Theme.Animate(_folderTranslate, TranslateTransform.YProperty, 0, Prefs.AnimationMs, () => _transitioning = false);
+        Theme.Animate(_folderTranslate, TranslateTransform.YProperty, 0, Prefs.AnimationMs, () => { _transitioning = false; _meter.End(); });
     }
     private void BuildFolderContents()
     {
         if (_folder == null) return;
         _folderLayer.Children.Clear(); _tiles.Clear(); _slots.Clear();
-        double width = Math.Max(320, ActualWidth - 140), cellW = (width - 40) / Prefs.Columns;
-        double icon = Math.Min(Prefs.IconSize, cellW - 56); icon = Math.Max(40, icon);
-        double cellH = icon + 70;
+        var rootLayout = GridLayout.Reference(ActualWidth, ActualHeight, Prefs);
+        double width = ActualWidth * .855, left = (ActualWidth - width) / 2;
+        double cellW = rootLayout.CellWidth, cellH = rootLayout.CellHeight;
+        double icon = rootLayout.IconSize * .8;
         int capacity = FolderCapacity();
         _folderPage = Math.Clamp(_folderPage, 0, Math.Max(0, (_folder.Children.Count - 1) / capacity));
         var visible = _folder.Children.Skip(_folderPage * capacity).Take(capacity).ToList();
         int rows = Math.Max(1, (visible.Count + Prefs.Columns - 1) / Prefs.Columns);
-        double height = Math.Min(ActualHeight - 150, rows * cellH + 100 + (_folder.Children.Count > capacity ? 50 : 0));
+        double padding = ActualHeight / 12;
+        double height = Math.Min(ActualHeight - 100, rows * cellH + padding);
+        double top = (ActualHeight - height) / 2;
         _folderPanel = new Border
         {
-            Width = width, Height = height, CornerRadius = new CornerRadius(24),
-            Background = new SolidColorBrush(Color.FromArgb(231, 77, 84, 108)), BorderBrush = new SolidColorBrush(Color.FromArgb(80, 215, 228, 255)), BorderThickness = new Thickness(1),
-            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 42, Color = Colors.Black, Opacity = .28, ShadowDepth = 7 }
+            Width = width, Height = height, CornerRadius = new CornerRadius(22),
+            Background = new SolidColorBrush(Color.FromArgb(195, 151, 148, 159)), BorderThickness = new Thickness(0)
         };
-        Canvas.SetLeft(_folderPanel, (ActualWidth - width) / 2); Canvas.SetTop(_folderPanel, (ActualHeight - height) / 2);
+        Canvas.SetLeft(_folderPanel, left); Canvas.SetTop(_folderPanel, top);
         var contents = new Grid(); _folderPanel.Child = contents;
         var title = Theme.Input(_folder.Name); title.Width = 300; title.HorizontalContentAlignment = HorizontalAlignment.Center;
-        title.HorizontalAlignment = HorizontalAlignment.Center; title.VerticalAlignment = VerticalAlignment.Top; title.Margin = new Thickness(0, 15, 0, 0);
-        title.FontSize = 21; title.BorderThickness = new Thickness(0); title.Background = Brushes.Transparent;
+        title.Height = 34; title.Padding = new Thickness(0); title.FontSize = 20; title.BorderThickness = new Thickness(0); title.Background = Brushes.Transparent;
+        Canvas.SetLeft(title, ActualWidth / 2 - title.Width / 2); Canvas.SetTop(title, top - 39);
         title.ToolTip = "點一下即可重新命名，Enter 儲存";
         var currentFolder = _folder;
         void CommitName() { string name = title.Text.Trim(); if (name.Length > 0 && name != currentFolder.Name) { currentFolder.Name = name; Save(); } title.Text = currentFolder.Name; }
         title.LostKeyboardFocus += (_, _) => CommitName();
         title.PreviewKeyDown += (_, e) => { if (e.Key == Key.Enter) { CommitName(); Keyboard.ClearFocus(); e.Handled = true; } else if (e.Key == Key.Escape) { title.Text = currentFolder.Name; Keyboard.ClearFocus(); e.Handled = true; } };
-        contents.Children.Add(title);
-        _folderItems = new Canvas { Background = Brushes.Transparent, Margin = new Thickness(20, 72, 20, _folder.Children.Count > capacity ? 54 : 12) };
+        _folderTitle = title; _folderLayer.Children.Add(title);
+        _folderItems = new Canvas { Background = Brushes.Transparent, Margin = new Thickness(0, padding / 2, 0, padding / 2) };
         contents.Children.Add(_folderItems);
         for (int i = 0; i < visible.Count; i++)
         {
             var tile = CreateTile(visible[i], icon); _folderItems.Children.Add(tile); _tiles[tile.Entry.Id] = tile;
-            var point = new Point(cellW * (i % Prefs.Columns) + (cellW - tile.Width) / 2, cellH * (i / Prefs.Columns));
+            var point = new Point(rootLayout.Left - left + cellW * (i % Prefs.Columns + .5) - tile.Width / 2, cellH * (i / Prefs.Columns) + Math.Max(0, (cellH - tile.Height) / 2));
             _slots[tile.Entry.Id] = point; tile.MoveTo(point, false, 0);
         }
         if (visible.Count == 0)
@@ -349,8 +416,6 @@ public sealed class LauncherWindow : Window
             var hint = Theme.Label("此資料夾目前是空的 · 可將程式拖放進來", 15, Theme.Muted);
             Canvas.SetLeft(hint, Math.Max(0, width / 2 - 210)); Canvas.SetTop(hint, 30); _folderItems.Children.Add(hint);
         }
-        var close = Theme.Button("×", (_, _) => CloseFolder()); close.HorizontalAlignment = HorizontalAlignment.Right; close.VerticalAlignment = VerticalAlignment.Top; close.Margin = new Thickness(0, 12, 15, 0);
-        contents.Children.Add(close);
         if (_folder.Children.Count > capacity)
         {
             var pager = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 10) };
@@ -360,18 +425,22 @@ public sealed class LauncherWindow : Window
         _folderLayer.Children.Add(_folderPanel);
         _status.Text = "點資料夾名稱可改名 · 點外側空白處返回";
     }
-    private void CloseFolder(bool immediately = false)
+    private async void CloseFolder(bool immediately = false)
     {
         if (_folder == null) return;
         if (_transitioning && !immediately) return;
         void Finish()
         {
-            _folder = null; _folderPanel = null; _folderItems = null; _folderLayer.Children.Clear();
+            _folder = null; _folderPanel = null; _folderItems = null; _folderTitle = null; _folderLayer.Children.Clear();
             _shade.Visibility = Visibility.Collapsed; _transitioning = false;
             _canvas.BeginAnimation(OpacityProperty, null); _canvas.Opacity = 1;
             Refresh(false);
+            if (!immediately) _meter.End();
         }
         if (immediately || _folderScale == null || _folderTranslate == null) { Finish(); return; }
+        _meter.Begin("folder-close"); _transitioning = true;
+        await PrepareVisual(_folderPanel!);
+        if (_folder == null || _quitting) return;
         if (_folderPanel!.RenderTransform is not TransformGroup)
         {
             _folderScale = new ScaleTransform(1, 1); _folderTranslate = new TranslateTransform();
@@ -379,9 +448,11 @@ public sealed class LauncherWindow : Window
             _folderPanel.RenderTransformOrigin = new Point(.5, .5); _folderPanel.RenderTransform = transforms;
         }
         _transitioning = true;
+        _meter.AnimationStarted();
         Theme.Animate(_canvas, OpacityProperty, 1, Prefs.AnimationMs);
         Theme.Animate(_shade, OpacityProperty, 0, Prefs.AnimationMs);
         Theme.Animate(_folderPanel!, OpacityProperty, 0, Prefs.AnimationMs);
+        if (_folderTitle != null) Theme.Animate(_folderTitle, OpacityProperty, 0, Prefs.AnimationMs);
         Theme.Animate(_folderScale, ScaleTransform.ScaleXProperty, .13, Prefs.AnimationMs);
         Theme.Animate(_folderScale, ScaleTransform.ScaleYProperty, .24, Prefs.AnimationMs);
         Theme.Animate(_folderTranslate, TranslateTransform.XProperty, _folderOrigin.X - ActualWidth / 2, Prefs.AnimationMs);
@@ -399,11 +470,19 @@ public sealed class LauncherWindow : Window
             _dragging = true;
             _ghost = new IconTile(_pressed.Entry, _pressed.IconSize) { Opacity = .94, IsHitTestVisible = false };
             _dragLayer.Children.Add(_ghost); _pressed.Opacity = .16;
+            _lastDragPoint = new Point(double.NaN, double.NaN);
+            _meter.Begin("drag"); _meter.AnimationStarted();
+            CompositionTarget.Rendering += RenderDrag;
             Mouse.Capture(this); _dragTimer.Start();
         }
-        if (_ghost == null) return;
-        Canvas.SetLeft(_ghost, position.X - _dragOffset.X); Canvas.SetTop(_ghost, position.Y - _dragOffset.Y);
-        UpdateDragTarget(position);
+        _pendingDragPoint = position;
+    }
+    private void RenderDrag(object? sender, EventArgs e)
+    {
+        if (!_dragging || _ghost == null || _pendingDragPoint == _lastDragPoint) return;
+        _lastDragPoint = _pendingDragPoint;
+        _ghost.Follow(new Point(_pendingDragPoint.X - _dragOffset.X, _pendingDragPoint.Y - _dragOffset.Y));
+        UpdateDragTarget(_pendingDragPoint);
     }
     private void UpdateDragTarget(Point position)
     {
@@ -429,10 +508,10 @@ public sealed class LauncherWindow : Window
             _status.Text = _mergeArmed ? (target.Entry.IsFolder ? "放開以加入「" + target.Entry.Name + "」" : "放開以建立資料夾") : "停留片刻以成組 · 快速放開則交換位置";
             return;
         }
-        ClearHover();
-        if (target != null)
+        if (_hoverId != target?.Entry.Id || _hoverSince != DateTime.MaxValue)
         {
-            PreviewSwap(target.Entry);
+            ClearHover();
+            if (target != null) PreviewSwap(target.Entry);
         }
         if ((position.X < 24 || position.X > ActualWidth - 24) && DateTime.UtcNow - _lastEdge > TimeSpan.FromMilliseconds(850))
         {
@@ -444,6 +523,7 @@ public sealed class LauncherWindow : Window
     private void PreviewSwap(Entry target)
     {
         if (_pressed == null) return;
+        if (_hoverId == target.Id && _hoverSince == DateTime.MaxValue) return;
         int from = ActiveItems.FindIndex(x => x.Id == _pressed.Entry.Id), to = ActiveItems.IndexOf(target);
         if (from < 0 || to < 0) return;
         // Preview uses the proposed slots. The model is committed only on mouse-up.
@@ -473,8 +553,9 @@ public sealed class LauncherWindow : Window
     }
     private void ClearHover()
     {
-        foreach (var tile in _tiles.Values) tile.MergeHint(false, false);
-        if (_hoverId != null) RelayoutPreview(ActiveItems);
+        if (_hoverId == null) return;
+        if (_tiles.TryGetValue(_hoverId, out var target)) target.MergeHint(false, false);
+        RelayoutPreview(ActiveItems);
         _hoverId = null; _mergeArmed = false;
     }
     private void MouseReleased(object sender, MouseButtonEventArgs e)
@@ -489,8 +570,9 @@ public sealed class LauncherWindow : Window
             else Launch(tile.Entry);
             return;
         }
-        string? target = _hoverId; bool merge = _mergeArmed;
         Point position = e.GetPosition(_surface);
+        UpdateDragTarget(position);
+        string? target = _hoverId; bool merge = _mergeArmed;
         // Resolve a quick release at a target center as a swap.
         if (target != null)
         {
@@ -507,12 +589,10 @@ public sealed class LauncherWindow : Window
         }
         else if (_folder == null)
         {
-            double cellWidth = Math.Max(90, (ActualWidth - 100) / Prefs.Columns);
-            double cellHeight = Math.Max(180, ActualHeight - 220) / Prefs.Rows;
-            int column = (int)Math.Floor((position.X - 50) / cellWidth), row = (int)Math.Floor((position.Y - 110) / cellHeight);
-            int index = _page * Capacity + row * Prefs.Columns + column;
+            var layout = GridLayout.Reference(ActualWidth, ActualHeight, Prefs);
+            int index = layout.IndexAt(position, Prefs.Columns, _page, Capacity);
             var items = ActiveItems;
-            if (column >= 0 && column < Prefs.Columns && row >= 0 && row < Prefs.Rows && index >= items.Count)
+            if (layout.Contains(position, Prefs.Columns, Prefs.Rows) && index >= items.Count)
             {
                 items.Remove(tile.Entry); items.Add(tile.Entry);
             }
@@ -521,9 +601,12 @@ public sealed class LauncherWindow : Window
     }
     private void EndDrag()
     {
+        bool wasDragging = _dragging;
+        CompositionTarget.Rendering -= RenderDrag;
         _dragging = false; _dragTimer.Stop(); _pressed = null; _ghost = null;
         _hoverId = null; _mergeArmed = false; _dragLayer.Children.Clear();
         if (Mouse.Captured == this) Mouse.Capture(null);
+        if (wasDragging) _meter.End();
     }
     private void CancelDrag()
     {
@@ -560,9 +643,9 @@ public sealed class LauncherWindow : Window
     }
     private async void Toast(string message)
     {
-        _status.Text = message;
+        _status.Text = message; _status.Visibility = Visibility.Visible;
         await Task.Delay(6500);
-        if (!_dragging && _status.Text == message) _status.Text = "Ctrl + Alt + Space 隨時喚出";
+        if (!_dragging && _status.Text == message) _status.Visibility = Visibility.Collapsed;
     }
     private ContextMenu MakeMenu()
     {
@@ -766,7 +849,7 @@ public sealed class LauncherWindow : Window
         }
         var columns = AddSlider("每列圖示", Prefs.Columns, 4, 10, 1, " 個");
         var rows = AddSlider("每頁列數", Prefs.Rows, 3, 6, 1, " 列");
-        var size = AddSlider("圖示大小", Prefs.IconSize, 60, 120, 5, "");
+        var size = AddSlider("圖示大小", Prefs.IconSize, 60, 160, 5, "");
         var animation = AddSlider("動畫時間", Prefs.AnimationMs, 100, 600, 20, " ms");
         var merge = AddSlider("重疊多久後成組", Prefs.MergeDelayMs, 350, 1200, 50, " ms");
         var explanation = Theme.Label("Ctrl+Alt+Space 喚出 · 設定與排列保存在程式旁的 data 資料夾", 11, Theme.Muted); explanation.Margin = new Thickness(0, 22, 0, 12); explanation.TextWrapping = TextWrapping.Wrap; outer.Children.Add(explanation);

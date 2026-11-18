@@ -9,7 +9,7 @@
     <AssemblyName>OrbitLaunchpad</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>orbit.ico</ApplicationIcon>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Description>A desktop launcher with animated folders and drag-to-group.</Description>
   </PropertyGroup>
   <ItemGroup>

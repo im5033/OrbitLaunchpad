@@ -22,7 +22,8 @@ public sealed class Preferences
 {
     public int Columns { get; set; } = 7;
     public int Rows { get; set; } = 4;
-    public double IconSize { get; set; } = 90;
+    public double IconSize { get; set; } = 120;
+    public int LayoutRevision { get; set; }
     public double AnimationMs { get; set; } = 260;
     public int MergeDelayMs { get; set; } = 550;
 }
@@ -100,9 +101,13 @@ public sealed class Store
             }
         }
         var p = Library.Preferences;
+        if (p.LayoutRevision < 2)
+        {
+            p.Columns = 7; p.Rows = 4; p.IconSize = 120; p.LayoutRevision = 2;
+        }
         p.Columns = Math.Clamp(p.Columns, 4, 10);
         p.Rows = Math.Clamp(p.Rows, 3, 6);
-        p.IconSize = Math.Clamp(p.IconSize, 60, 120);
+        p.IconSize = Math.Clamp(p.IconSize, 60, 160);
         p.AnimationMs = Math.Clamp(p.AnimationMs, 100, 600);
         p.MergeDelayMs = Math.Clamp(p.MergeDelayMs, 350, 1200);
     }
