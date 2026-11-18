@@ -2,11 +2,11 @@
 
 仿 macOS Launchpad 的 Windows 應用程式啟動器，使用 C#、WPF 與 .NET 10 開發。
 
-本頁對應 **v0.5.0**。加入主顯示器或指定螢幕設定，其他螢幕顯示霧玻璃背景，並提供輕量版。
+本頁對應 **v0.5.1**。登入自啟只初始化系統匣與快捷鍵，首次喚出才建立畫面，修正開機時短暫閃黑的流程。
 
 ## 下載與啟動
 
-從 [v0.5.0 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.5.0) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
+從 [v0.5.1 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.5.1) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
 可在 [所有版本](https://github.com/im5033/OrbitLaunchpad/releases) 查看歷史發佈。
 
 | 版本 | 使用條件 |

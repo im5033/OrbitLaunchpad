@@ -33,10 +33,10 @@ public static class Program
         try
         {
             var store = new Store(args.Contains("--review") ? Path.Combine(AppContext.BaseDirectory, "review-data") : null);
-            var window = new LauncherWindow(store, args.Contains("--background"));
+            var window = new LauncherWindow(store);
             app.MainWindow = window;
             Task.Run(() => { while (true) { _toggle.WaitOne(); app.Dispatcher.BeginInvoke(window.Toggle); } });
-            window.Show();
+            window.Start(args.Contains("--background"));
             app.Run();
             return 0;
         }
@@ -114,6 +114,13 @@ public static class SelfTests
             Check(Displays.Select(monitors, "disconnected").Device == "main", "missing display falls back to primary without changing saved preference");
             store.Library.Preferences.DisplayDevice = "left"; LayoutArchive.Apply(store, snapshot); store.Save();
             Check(new Store(testDirectory).Library.Preferences.DisplayDevice == "left", "display preference persists and survives layout restoration");
+            store.Library.Preferences.HotkeyEnabled = false;
+            var testApp = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            var launcher = new LauncherWindow(store);
+            testApp.MainWindow = launcher;
+            launcher.Start(background: true);
+            Check(!launcher.IsVisible && new System.Windows.Interop.WindowInteropHelper(launcher).Handle == IntPtr.Zero,
+                "background startup initializes without creating a fullscreen window");
             string text = string.Join(Environment.NewLine, checks);
             File.WriteAllText(report ?? Path.Combine(AppContext.BaseDirectory, "self-test.txt"), text);
             return 0;
