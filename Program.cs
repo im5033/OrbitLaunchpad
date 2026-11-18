@@ -65,6 +65,18 @@ public static class SelfTests
             Check(Math.Abs(reference.Left + reference.CellWidth * .5 - 380) < .01 && Math.Abs(reference.Top - 75) < .01 && Math.Abs(reference.CellWidth - 300) < .01 && Math.Abs(reference.CellHeight - 247.5) < .01 && Math.Abs(reference.IconSize - 150) < .01, "reference screenshot geometry: 7 columns, icon size, row pitch, and margins");
             var fifth = reference.TilePosition(11, 7, 204);
             Check(reference.IndexAt(new Point(fifth.X + 102, fifth.Y + 75), 7, 0, 28) == 11, "drag hit testing follows reference grid at scaled resolutions");
+            var targets = new[] { new DragTarget("target", new Point(500, 200), 120) };
+            var centered = DragPolicy.IconCenter(new Point(433, 160), new Point(20, 20), 174, 120);
+            Check(DragPolicy.Hit(centered, targets, true, null).Action == DragAction.Group, "off-center grab groups by dragged icon center rather than cursor");
+            Check(DragPolicy.Hit(new Point(565, 200), targets, true, null).Action == DragAction.Group, "visible overlap has a forgiving group target");
+            Check(DragPolicy.Hit(new Point(592, 200), targets, true, "target").Action == DragAction.Group && DragPolicy.Hit(new Point(592, 200), targets, true, null).Action == DragAction.Swap, "overlap target stays selected through pointer jitter");
+            Check(DragPolicy.Hit(new Point(650, 200), targets, true, "target").Action == DragAction.None, "moving away releases group target");
+            Check(DragPolicy.Hit(new Point(500, 200), targets, false, null).Action == DragAction.Swap, "folder drag and folder contents cannot create nested groups");
+            var gesture = new MenuDismissGesture(); gesture.MenuOpened(); gesture.DismissedWithLeftButton();
+            Check(gesture.AwaitingRelease && gesture.ConsumeRelease(), "outside click is consumed when closing context menu");
+            Check(!gesture.ConsumeRelease(), "next independent blank click can dismiss launcher normally");
+            gesture.DismissedWithLeftButton(); gesture.MenuOpened();
+            Check(!gesture.AwaitingRelease, "opening a new menu does not inherit an old click gesture");
             string testDirectory = Path.Combine(AppContext.BaseDirectory, "test-data-" + Guid.NewGuid().ToString("N"));
             var store = new Store(testDirectory);
             store.Library.Items = items; store.Library.Initialized = true; store.Save();

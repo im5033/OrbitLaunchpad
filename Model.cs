@@ -25,7 +25,7 @@ public sealed class Preferences
     public double IconSize { get; set; } = 120;
     public int LayoutRevision { get; set; }
     public double AnimationMs { get; set; } = 260;
-    public int MergeDelayMs { get; set; } = 550;
+    public int ReorderDelayMs { get; set; } = 260;
 }
 
 public sealed class Library
@@ -109,7 +109,7 @@ public sealed class Store
         p.Rows = Math.Clamp(p.Rows, 3, 6);
         p.IconSize = Math.Clamp(p.IconSize, 60, 160);
         p.AnimationMs = Math.Clamp(p.AnimationMs, 100, 600);
-        p.MergeDelayMs = Math.Clamp(p.MergeDelayMs, 350, 1200);
+        p.ReorderDelayMs = Math.Clamp(p.ReorderDelayMs, 150, 700);
     }
     public void Save()
     {
