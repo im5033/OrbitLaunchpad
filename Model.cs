@@ -26,6 +26,10 @@ public sealed class Preferences
     public int LayoutRevision { get; set; }
     public double AnimationMs { get; set; } = 260;
     public int ReorderDelayMs { get; set; } = 260;
+    public bool HotkeyEnabled { get; set; } = true;
+    public uint HotkeyModifiers { get; set; } = 3;
+    public uint HotkeyVirtualKey { get; set; } = 32;
+    public bool ConfirmRemoval { get; set; }
 }
 
 public sealed class Library
@@ -110,6 +114,7 @@ public sealed class Store
         p.IconSize = Math.Clamp(p.IconSize, 60, 160);
         p.AnimationMs = Math.Clamp(p.AnimationMs, 100, 600);
         p.ReorderDelayMs = Math.Clamp(p.ReorderDelayMs, 150, 700);
+        if (!Hotkeys.Valid(p.HotkeyModifiers, p.HotkeyVirtualKey)) { p.HotkeyModifiers = 3; p.HotkeyVirtualKey = 32; }
     }
     public void Save()
     {

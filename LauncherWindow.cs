@@ -15,10 +15,11 @@ using System.Windows.Threading;
 
 namespace Orbit;
 
-public sealed class LauncherWindow : Window
+public sealed partial class LauncherWindow : Window
 {
     private readonly Store _store;
     private readonly FrameMeter _meter;
+    private readonly bool _startHidden;
     private Preferences Prefs => _store.Library.Preferences;
     private readonly Grid _surface = new();
     private readonly Grid _scene = new() { Background = Brushes.Transparent };
@@ -58,19 +59,22 @@ public sealed class LauncherWindow : Window
     private IntPtr _hwnd;
     private HwndSource? _source;
     private bool _hotkeyRegistered;
+    private int _hotkeyId = 74;
+    private uint _registeredModifiers, _registeredKey;
     private List<Entry> ActiveItems => _folder?.Children ?? _store.Library.Items;
     private int Capacity => Prefs.Columns * Prefs.Rows;
 
-    public LauncherWindow(Store store)
+    public LauncherWindow(Store store, bool startHidden = false)
     {
         _store = store;
+        _startHidden = startHidden;
         _meter = new FrameMeter(store.DirectoryPath);
         Title = "Orbit Launchpad"; Background = new SolidColorBrush(Color.FromRgb(10, 13, 27));
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = true;
         Topmost = true; AllowsTransparency = false;
         Opacity = 0;
         FontFamily = new FontFamily("Segoe UI, Microsoft JhengHei UI"); Foreground = Theme.Text;
-        Icon = Native.Icon(Path.Combine(AppContext.BaseDirectory, "orbit.ico"));
+        Icon = Native.Icon(StartupRegistration.Executable);
         Content = _surface;
         RenderOptions.SetBitmapScalingMode(_surface, BitmapScalingMode.LowQuality);
         BuildBackground();
@@ -115,7 +119,8 @@ public sealed class LauncherWindow : Window
             await Native.WarmIconsAsync(LayoutRules.All(_store.Library.Items));
             if (_quitting) return;
             _scene.UpdateLayout(); Refresh(false); _ready = true;
-            AnimateOpen();
+            if (_startHidden) { Hide(); Opacity = 1; _meter.End("background-ready"); }
+            else AnimateOpen();
             if (store.LoadWarning != null) Toast(store.LoadWarning);
         };
         Closing += (_, e) => { if (!_quitting) { e.Cancel = true; HideLauncher(); } };
@@ -143,11 +148,6 @@ public sealed class LauncherWindow : Window
     }
     private void BuildChrome()
     {
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 12, 20, 0) };
-        var settings = Theme.Button("⋯", (_, _) => { var menu = SettingsMenu(); menu.PlacementTarget = actions; menu.IsOpen = true; });
-        settings.MinHeight = 24; settings.Height = 24; settings.Padding = new Thickness(8, 0, 8, 0); settings.Background = Brushes.Transparent; settings.Foreground = Theme.Muted; settings.Opacity = .45; settings.ToolTip = "添加、設定與結束 Orbit";
-        settings.MouseLeave += (_, _) => settings.Opacity = .45;
-        actions.Children.Add(settings); _scene.Children.Add(actions);
         _pager.VerticalAlignment = VerticalAlignment.Bottom;
         _scene.Children.Add(_pager);
         _status.HorizontalAlignment = HorizontalAlignment.Center; _status.VerticalAlignment = VerticalAlignment.Bottom;
@@ -157,18 +157,43 @@ public sealed class LauncherWindow : Window
     {
         _hwnd = new WindowInteropHelper(this).Handle;
         _source = HwndSource.FromHwnd(_hwnd); _source.AddHook(WindowMessage);
-        _hotkeyRegistered = Native.RegisterHotKey(_hwnd, 74, 0x0001 | 0x0002 | 0x4000, 0x20);
-        _tray = new System.Windows.Forms.NotifyIcon { Visible = true, Text = "Orbit Launchpad · Ctrl+Alt+Space", Icon = new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "orbit.ico")) };
+        bool hotkeyOk = ConfigureHotkey(Prefs.HotkeyEnabled, Prefs.HotkeyModifiers, Prefs.HotkeyVirtualKey, out string hotkeyError);
+        _tray = new System.Windows.Forms.NotifyIcon { Visible = true, Text = "Orbit Launchpad", Icon = System.Drawing.Icon.ExtractAssociatedIcon(StartupRegistration.Executable) ?? System.Drawing.SystemIcons.Application };
         _tray.DoubleClick += (_, _) => Dispatcher.Invoke(Toggle);
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("開啟 / 收起", null, (_, _) => Dispatcher.Invoke(Toggle));
+        menu.Items.Add("設定…", null, (_, _) => Dispatcher.Invoke(() => { if (!IsVisible) Toggle(); ShowSettings(); }));
         menu.Items.Add("結束 Orbit", null, (_, _) => Dispatcher.Invoke(Quit));
         _tray.ContextMenuStrip = menu;
-        if (!_hotkeyRegistered) Dispatcher.BeginInvoke(() => Toast("Ctrl+Alt+Space 已被其他程式使用。仍可透過捷徑或系統匣開啟。"));
+        UpdateTrayText();
+        if (!hotkeyOk) Dispatcher.BeginInvoke(() => Toast(hotkeyError + " 可透過系統匣開啟設定。"));
+    }
+    private bool ConfigureHotkey(bool enabled, uint modifiers, uint key, out string error)
+    {
+        error = "";
+        if (!enabled)
+        {
+            if (_hotkeyRegistered) Native.UnregisterHotKey(_hwnd, _hotkeyId);
+            _hotkeyRegistered = false; return true;
+        }
+        if (!Hotkeys.Valid(modifiers, key)) { error = "請選擇有效的主按鍵。"; return false; }
+        if (_hotkeyRegistered && modifiers == _registeredModifiers && key == _registeredKey) return true;
+        int nextId = _hotkeyId == 74 ? 75 : 74;
+        if (!Native.RegisterHotKey(_hwnd, nextId, modifiers | 0x4000, key))
+        {
+            error = "無法使用「" + Hotkeys.Describe(modifiers, key) + "」；可能已被其他程式使用，或是 Windows 保留組合。原有快捷鍵不變。";
+            return false;
+        }
+        if (_hotkeyRegistered) Native.UnregisterHotKey(_hwnd, _hotkeyId);
+        _hotkeyId = nextId; _hotkeyRegistered = true; _registeredModifiers = modifiers; _registeredKey = key; return true;
+    }
+    private void UpdateTrayText()
+    {
+        if (_tray != null) _tray.Text = "Orbit Launchpad · " + (Prefs.HotkeyEnabled ? Hotkeys.Describe(Prefs.HotkeyModifiers, Prefs.HotkeyVirtualKey) : "快捷鍵已關閉");
     }
     private IntPtr WindowMessage(IntPtr hwnd, int message, IntPtr wparam, IntPtr lparam, ref bool handled)
     {
-        if (message == 0x0312 && wparam.ToInt32() == 74) { Toggle(); handled = true; }
+        if (message == 0x0312 && wparam.ToInt32() == _hotkeyId) { Toggle(); handled = true; }
         return IntPtr.Zero;
     }
     private void PositionOnScreen()
@@ -241,7 +266,7 @@ public sealed class LauncherWindow : Window
     {
         _quitting = true; Save(); _dragTimer.Stop();
         InputManager.Current.PreProcessInput -= BeforeInput;
-        if (_hotkeyRegistered) Native.UnregisterHotKey(_hwnd, 74);
+        if (_hotkeyRegistered) Native.UnregisterHotKey(_hwnd, _hotkeyId);
         _source?.RemoveHook(WindowMessage); _tray?.Dispose();
         System.Windows.Application.Current.Shutdown();
     }
@@ -665,17 +690,12 @@ public sealed class LauncherWindow : Window
         }));
         menu.Items.Add(ActionItem("按名稱排序", () => { _store.Library.Items = _store.Library.Items.OrderByDescending(x => x.IsFolder).ThenBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList(); _page = 0; Save(); Refresh(false); }));
         menu.Items.Add(new Separator());
-        menu.Items.Add(ActionItem("外觀與動畫…", ShowSettings));
-        menu.Items.Add(ActionItem("收起啟動器", HideLauncher));
-        return menu;
-    }
-    private ContextMenu SettingsMenu()
-    {
-        var menu = MakeMenu();
-        menu.Items.Add(ActionItem("外觀與動畫…", ShowSettings));
-        menu.Items.Add(ActionItem("添加圖示…", ShowAdd));
+        menu.Items.Add(ActionItem("設定…", ShowSettings));
+        menu.Items.Add(ActionItem("備份佈局…", () => BackupLayout(this)));
+        menu.Items.Add(ActionItem("恢復佈局…", () => RestoreLayout(this)));
         menu.Items.Add(ActionItem("操作說明", ShowHelp));
         menu.Items.Add(new Separator());
+        menu.Items.Add(ActionItem("收起啟動器", HideLauncher));
         menu.Items.Add(ActionItem("結束 Orbit", Quit));
         return menu;
     }
@@ -698,12 +718,15 @@ public sealed class LauncherWindow : Window
                 _store.Library.Items.RemoveAt(index); _store.Library.Items.InsertRange(index, entry.Children); Save(); Refresh(false);
             }));
         menu.Items.Add(new Separator());
-        menu.Items.Add(ActionItem("從啟動器移除…", () =>
+        menu.Items.Add(ActionItem("從啟動器移除", () =>
         {
-            _modal = true;
-            var result = System.Windows.MessageBox.Show(this, "從啟動器移除「" + entry.Name + "」？\n" + (entry.IsFolder ? "資料夾內的圖示也會從啟動器移除。\n" : "") + "原本的程式、捷徑與檔案都會保留。", "移除圖示", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            _modal = false;
-            if (result != MessageBoxResult.Yes) return;
+            if (Prefs.ConfirmRemoval)
+            {
+                _modal = true;
+                var result = System.Windows.MessageBox.Show(this, "從啟動器移除「" + entry.Name + "」？\n" + (entry.IsFolder ? "資料夾內的圖示也會從啟動器移除。\n" : "") + "原本的程式、捷徑與檔案都會保留。", "移除圖示", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                _modal = false;
+                if (result != MessageBoxResult.Yes) return;
+            }
             RemoveEntry(_store.Library.Items, entry.Id); Save(); Refresh(false);
         }));
         return menu;
@@ -832,7 +855,7 @@ public sealed class LauncherWindow : Window
         }, true));
         outer.Children.Add(buttons); dialog.Content = new ScrollViewer { Content = outer, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; RunDialog(dialog);
     }
-    private void ShowSettings()
+    private void ShowAppearanceSettings()
     {
         var dialog = Theme.Dialog(this, "外觀與動畫 · Orbit", 550, 575);
         var outer = new StackPanel { Margin = new Thickness(26) };

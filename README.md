@@ -2,14 +2,14 @@
 
 仿 macOS Launchpad 的 Windows 應用程式啟動器，使用 C#、WPF 與 .NET 10 開發。
 
-本頁對應 **v0.3.0**。移除搜尋列，改善圖示重疊分組與換位判定，修正關閉右鍵選單時誤收起 Launchpad。
+本頁對應 **v0.4.0**。加入快捷鍵設定、登入自啟、移除確認偏好、佈局備份恢復，並整合空白處右鍵選單。
 
 ## 下載與啟動
 
-從 [v0.3.0 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.3.0) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
+從 [v0.4.0 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.4.0) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
 可在 [所有版本](https://github.com/im5033/OrbitLaunchpad/releases) 查看歷史發佈。
 
-此歷史版本需要 Windows x64 與 .NET Desktop Runtime 10 x64。
+此版本提供 Windows x64 完整可攜版，包內附帶所需 .NET 執行環境。
 
 首次啟動會讀取桌面及開始功能表的捷徑，建立初始項目。
 佈局與設定儲存在程式旁的 `data` 資料夾。升級時先從系統匣結束舊程式，再替換執行檔並保留 `data`。
@@ -26,6 +26,14 @@
 | 點空白處 | 逐層返回或收起 Launchpad |
 | 右鍵圖示／空白處 | 開啟項目或主選單 |
 | 系統匣圖示 | 開啟、收起或結束程式 |
+
+## 設定與佈局備份
+
+空白處右鍵 → **設定**，可自訂快捷鍵、佈局、動畫時間與移除圖示前是否詢問。
+開機自啟使用目前使用者的登錄表 Run 項目，登入後在背景待命。移動程式位置後，重新套用自啟設定即可更新路徑。
+
+右鍵選單提供 **備份佈局** 與 **恢復佈局**，使用 `.orbit-layout` 格式保存排列、分類資料夾、捷徑及自訂圖示。
+恢復前會自動把當前佈局備份到 `data/backups`。程式移除圖示時只修改佈局。
 
 ## 從原始碼建置
 

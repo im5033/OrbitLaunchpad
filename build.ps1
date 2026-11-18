@@ -11,6 +11,6 @@ $publishArguments = @(
     '--self-contained', $selfContained,
     '-p:DebugType=None', '-o', $destination
 )
-
+$publishArguments += @('-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', "-p:EnableCompressionInSingleFile=$selfContained")
 & dotnet @publishArguments
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }

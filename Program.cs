@@ -17,7 +17,7 @@ public static class Program
         if (args.Contains("--self-test")) return SelfTests.Run(args.SkipWhile(a => a != "--self-test").Skip(1).FirstOrDefault());
         _mutex = new Mutex(true, "Local\\OrbitLaunchpad.v1", out bool first);
         _toggle = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\OrbitLaunchpad.Toggle.v1");
-        if (!first) { _toggle.Set(); return 0; }
+        if (!first) { if (!args.Contains("--background")) _toggle.Set(); return 0; }
         var app = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.DispatcherUnhandledException += (_, e) =>
         {
@@ -28,7 +28,7 @@ public static class Program
         try
         {
             var store = new Store(args.Contains("--review") ? Path.Combine(AppContext.BaseDirectory, "review-data") : null);
-            var window = new LauncherWindow(store);
+            var window = new LauncherWindow(store, args.Contains("--background"));
             app.MainWindow = window;
             Task.Run(() => { while (true) { _toggle.WaitOne(); app.Dispatcher.BeginInvoke(window.Toggle); } });
             window.Show();
@@ -86,6 +86,21 @@ public static class SelfTests
             File.WriteAllText(store.FilePath, "{broken");
             var recovered = new Store(testDirectory);
             Check(recovered.LoadWarning != null && recovered.Library.Items.Count == 2, "corrupt layout recovers last valid backup");
+            Check(!new Preferences().ConfirmRemoval && Hotkeys.Valid(0, 120) && Hotkeys.Valid(14, 120) && !Hotkeys.Valid(16, 120) && !Hotkeys.Valid(3, 16), "custom hotkeys and removal defaults validated");
+            Check(Hotkeys.Describe(14, 120) == "Ctrl + Shift + Win + F9", "custom hotkey labels include every modifier");
+            Check(StartupRegistration.CommandFor(@"C:\Portable Apps\Orbit.exe") == '"' + @"C:\Portable Apps\Orbit.exe" + '"' + " --background", "startup command quotes portable paths and launches hidden");
+            string shortcut = Path.Combine(testDirectory, "test.url"); File.WriteAllText(shortcut, "[InternetShortcut]\nURL=https://example.com");
+            store.Library.Items = new() { new Entry { Name = "備份資料夾", IsFolder = true, Children = new() { new Entry { Name = "捷徑", Target = shortcut } } } };
+            store.Library.Preferences.HotkeyVirtualKey = 120; store.Library.Preferences.ConfirmRemoval = true;
+            string archive = Path.Combine(testDirectory, "backup.orbit-layout"); LayoutArchive.Export(store, archive);
+            var snapshot = LayoutArchive.Read(store, archive);
+            Check(snapshot.Items[0].Name == "備份資料夾" && File.ReadAllText(PortablePaths.Resolve(snapshot.Items[0].Children[0].Target)) == File.ReadAllText(shortcut), "layout archive restores folder order and embedded shortcuts");
+            snapshot.Columns = 8; LayoutArchive.Apply(store, snapshot);
+            Check(store.Library.Preferences.Columns == 8 && store.Library.Preferences.HotkeyVirtualKey == 120 && store.Library.Preferences.ConfirmRemoval, "layout restore preserves activation and removal settings");
+            string malformed = Path.Combine(testDirectory, "bad.orbit-layout");
+            using (var zip = System.IO.Compression.ZipFile.Open(malformed, System.IO.Compression.ZipArchiveMode.Create)) { zip.CreateEntry("assets/../outside.txt"); }
+            bool rejected = false; try { LayoutArchive.Read(store, malformed); } catch (InvalidDataException) { rejected = true; }
+            Check(rejected && store.Library.Items[0].Name == "備份資料夾", "invalid archive paths rejected without replacing current layout");
             string text = string.Join(Environment.NewLine, checks);
             File.WriteAllText(report ?? Path.Combine(AppContext.BaseDirectory, "self-test.txt"), text);
             return 0;

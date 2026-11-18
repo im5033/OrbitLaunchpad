@@ -17,7 +17,7 @@ namespace Orbit;
 
 internal static class Native
 {
-    [DllImport("user32.dll")] internal static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
+    [DllImport("user32.dll", SetLastError = true)] internal static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(IntPtr hwnd, int id);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool SystemParametersInfo(uint action, uint parameter, StringBuilder value, uint flags);
@@ -52,6 +52,7 @@ internal static class Native
     public static ImageSource? Icon(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
+        path = PortablePaths.Resolve(path);
         if (IconCache.TryGetValue(path, out var cached)) return cached;
         if (string.Equals(Path.GetExtension(path), ".lnk", StringComparison.OrdinalIgnoreCase))
         {
@@ -157,17 +158,18 @@ internal static class Native
     }
     public static void Open(Entry entry, bool elevated = false)
     {
-        Process.Start(new ProcessStartInfo(entry.Target)
+        Process.Start(new ProcessStartInfo(PortablePaths.Resolve(entry.Target))
         {
             UseShellExecute = true, Arguments = entry.Arguments,
-            WorkingDirectory = string.IsNullOrEmpty(entry.WorkingDirectory) ? "" : entry.WorkingDirectory,
+            WorkingDirectory = PortablePaths.Resolve(entry.WorkingDirectory),
             Verb = elevated ? "runas" : ""
         });
     }
     public static void Reveal(Entry entry)
     {
-        if (File.Exists(entry.Target)) Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + entry.Target + "\"") { UseShellExecute = true });
-        else if (Directory.Exists(entry.Target)) Process.Start(new ProcessStartInfo(entry.Target) { UseShellExecute = true });
+        string target = PortablePaths.Resolve(entry.Target);
+        if (File.Exists(target)) Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + target + "\"") { UseShellExecute = true });
+        else if (Directory.Exists(target)) Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
         else throw new FileNotFoundException("找不到此項目的檔案位置。", entry.Target);
     }
     public static List<Entry> ScanShortcuts()
