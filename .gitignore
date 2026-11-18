@@ -1,0 +1,12 @@
+bin/
+obj/
+artifacts/
+data/
+review-data/
+test-data-*/
+.vs/
+*.user
+*.pdb
+*.log
+*.zip
+*.orbit-layout
