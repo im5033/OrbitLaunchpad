@@ -121,6 +121,22 @@ public static class SelfTests
             launcher.Start(background: true);
             Check(!launcher.IsVisible && new System.Windows.Interop.WindowInteropHelper(launcher).Handle == IntPtr.Zero,
                 "background startup initializes without creating a fullscreen window");
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            string activationLog = Path.Combine(testDirectory, "activation.log");
+            const string preparedHidden = "icons-ready visible=False visual-handle-created=False";
+            bool prepared = false;
+            timer.Tick += (_, _) =>
+            {
+                prepared = File.Exists(activationLog) && File.ReadAllText(activationLog).Contains(preparedHidden);
+                if (prepared || deadline.Elapsed > TimeSpan.FromSeconds(8)) frame.Continue = false;
+            };
+            timer.Start();
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+            timer.Stop();
+            Check(prepared && !launcher.IsVisible && new System.Windows.Interop.WindowInteropHelper(launcher).Handle == IntPtr.Zero,
+                "background icon preparation completes without creating a fullscreen window");
             string text = string.Join(Environment.NewLine, checks);
             File.WriteAllText(report ?? Path.Combine(AppContext.BaseDirectory, "self-test.txt"), text);
             return 0;

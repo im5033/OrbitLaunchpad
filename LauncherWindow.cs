@@ -34,6 +34,7 @@ public sealed partial class LauncherWindow : Window
     private readonly Dictionary<string, (string Signature, IconTile Tile)> _tileCache = new();
     private string _rootViewKey = "";
     private bool _ready, _layoutDirty = true;
+    private Task? _iconPreparation;
     private Point _pendingDragPoint, _lastDragPoint;
     private Entry? _folder;
     private Border? _folderPanel;
@@ -165,8 +166,12 @@ public sealed partial class LauncherWindow : Window
         _tray.ContextMenuStrip = menu;
         UpdateTrayText();
         if (!hotkeyOk) Dispatcher.BeginInvoke(() => { Toast(hotkeyError + " 可透過系統匣開啟設定。"); _tray.ShowBalloonTip(10000, "Orbit 快捷鍵未啟用", hotkeyError, System.Windows.Forms.ToolTipIcon.Warning); });
-        if (background) ActivationLog($"background-ready visible={IsVisible} visual-handle-created={_hwnd != IntPtr.Zero}");
-        else Toggle();
+        if (background)
+        {
+            ActivationLog($"background-ready visible={IsVisible} visual-handle-created={_hwnd != IntPtr.Zero}");
+            _iconPreparation = Dispatcher.InvokeAsync(PrepareIconsAsync, DispatcherPriority.Background).Task.Unwrap();
+        }
+        else Dispatcher.BeginInvoke(Toggle);
     }
     private bool ConfigureHotkey(bool enabled, uint modifiers, uint key, out string error)
     {
@@ -218,15 +223,7 @@ public sealed partial class LauncherWindow : Window
         {
             if (!_ready)
             {
-                if (!_store.Library.Initialized)
-                {
-                    var shortcuts = await Task.Run(Native.ScanShortcuts);
-                    if (_quitting) return;
-                    _store.Library.Items.AddRange(shortcuts.Take(Capacity));
-                    _store.Library.Initialized = true;
-                    Save();
-                }
-                await Native.WarmIconsAsync(LayoutRules.All(_store.Library.Items));
+                await (_iconPreparation ??= PrepareIconsAsync());
                 if (_quitting) return;
                 _ready = true;
             }
@@ -243,6 +240,26 @@ public sealed partial class LauncherWindow : Window
         {
             _transitioning = false;
             _meter.End();
+        }
+    }
+    private async Task PrepareIconsAsync()
+    {
+        try
+        {
+            if (!_store.Library.Initialized)
+            {
+                var shortcuts = await Task.Run(Native.ScanShortcuts);
+                if (_quitting) return;
+                _store.Library.Items.AddRange(shortcuts.Take(Capacity));
+                _store.Library.Initialized = true;
+                Save();
+            }
+            await Native.WarmIconsAsync(LayoutRules.All(_store.Library.Items));
+            if (!_quitting) ActivationLog($"icons-ready visible={IsVisible} visual-handle-created={_hwnd != IntPtr.Zero}");
+        }
+        catch (Exception error)
+        {
+            ActivationLog("icon preparation failed: " + error.Message);
         }
     }
     private static async Task PrepareVisual(FrameworkElement visual)
