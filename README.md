@@ -2,11 +2,11 @@
 
 仿 macOS Launchpad 的 Windows 應用程式啟動器，使用 C#、WPF 與 .NET 10 開發。
 
-本頁對應 **v0.4.2**。加入專用執行緒的快捷鍵備援與事件去重，背景和圖示改成同步淡入淡出。
+本頁對應 **v0.4.3**。添加介面改成小視窗，加入資料夾選擇，並在添加時收起全螢幕背景。
 
 ## 下載與啟動
 
-從 [v0.4.2 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.4.2) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
+從 [v0.4.3 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.4.3) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
 可在 [所有版本](https://github.com/im5033/OrbitLaunchpad/releases) 查看歷史發佈。
 
 此版本提供 Windows x64 完整可攜版，包內附帶所需 .NET 執行環境。
@@ -34,6 +34,11 @@
 
 右鍵選單提供 **備份佈局** 與 **恢復佈局**，使用 `.orbit-layout` 格式保存排列、分類資料夾、捷徑及自訂圖示。
 恢復前會自動把當前佈局備份到 `data/backups`。程式移除圖示時只修改佈局。
+
+## 添加程式與資料夾
+
+空白處右鍵 → **添加圖示**。添加小視窗開啟時會收起 Launchpad，方便從檔案總管拖入項目。
+也可按 **選擇檔案** 或 **選擇資料夾**，最後按 **添加** 儲存。
 
 ## 從原始碼建置
 
