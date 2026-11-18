@@ -60,6 +60,8 @@ public sealed partial class LauncherWindow : Window
     private HwndSource? _source;
     private bool _hotkeyRegistered;
     private HotkeyReceiver? _hotkeyReceiver;
+    private ShortcutFallback? _shortcutFallback;
+    private readonly ShortcutPulseGate _shortcutGate = new();
     private string _hotkeyError = "";
     private int _hotkeyId = 74;
     private uint _registeredModifiers, _registeredKey;
@@ -74,7 +76,9 @@ public sealed partial class LauncherWindow : Window
         Title = "Orbit Launchpad"; Background = new SolidColorBrush(Color.FromRgb(10, 13, 27));
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = true;
         Topmost = true; AllowsTransparency = false;
-        Opacity = 1;
+        // Keep the same layered-window mode for the whole lifetime, including when hidden.
+        // Crossing exactly 0/1 makes WPF switch native window styles during a transition.
+        Opacity = .001;
         FontFamily = new FontFamily("Segoe UI, Microsoft JhengHei UI"); Foreground = Theme.Text;
         Icon = Native.Icon(StartupRegistration.Executable);
         Content = _surface;
@@ -158,15 +162,16 @@ public sealed partial class LauncherWindow : Window
     private void InitializeNative()
     {
         _hwnd = new WindowInteropHelper(this).Handle;
-        Native.Cloak(_hwnd, true);
         _source = HwndSource.FromHwnd(_hwnd); _source.AddHook(WindowMessage);
         _hotkeyReceiver = new HotkeyReceiver();
         _hotkeyReceiver.Pressed += id => Dispatcher.BeginInvoke(() =>
         {
             if (id != _hotkeyId) return;
-            ActivationLog("received " + Hotkeys.Describe(_registeredModifiers, _registeredKey) + $" visible={IsVisible} ready={_ready} modal={_modal} transition={_transitioning} hiding={_hiding}");
-            Toggle();
-        });
+            ShortcutPressed("registered");
+        }, DispatcherPriority.Send);
+        _shortcutFallback = new ShortcutFallback();
+        _shortcutFallback.Pressed += () => Dispatcher.BeginInvoke(() => ShortcutPressed("backup"), DispatcherPriority.Send);
+        ActivationLog("backup receiver available=" + _shortcutFallback.Available);
         bool hotkeyOk = ConfigureHotkey(Prefs.HotkeyEnabled, Prefs.HotkeyModifiers, Prefs.HotkeyVirtualKey, out string hotkeyError);
         _tray = new System.Windows.Forms.NotifyIcon { Visible = true, Text = "Orbit Launchpad", Icon = System.Drawing.Icon.ExtractAssociatedIcon(StartupRegistration.Executable) ?? System.Drawing.SystemIcons.Application };
         _tray.DoubleClick += (_, _) => Dispatcher.Invoke(Toggle);
@@ -184,6 +189,7 @@ public sealed partial class LauncherWindow : Window
         if (!enabled)
         {
             if (_hotkeyRegistered) Native.UnregisterHotKey(_hotkeyReceiver!.Handle, _hotkeyId);
+            _shortcutFallback?.Configure(false, modifiers, key);
             _hotkeyRegistered = false; _hotkeyError = ""; return true;
         }
         if (!Hotkeys.Valid(modifiers, key)) { error = "請選擇有效的主按鍵。"; return false; }
@@ -199,9 +205,16 @@ public sealed partial class LauncherWindow : Window
         }
         if (_hotkeyRegistered) Native.UnregisterHotKey(_hotkeyReceiver.Handle, _hotkeyId);
         _hotkeyId = nextId; _hotkeyRegistered = true; _registeredModifiers = modifiers; _registeredKey = key; _hotkeyError = "";
+        _shortcutFallback?.Configure(true, modifiers, key);
         ActivationLog("registered " + Hotkeys.Describe(modifiers, key)); return true;
     }
     private void ActivationLog(string text) { try { File.AppendAllText(Path.Combine(_store.DirectoryPath, "activation.log"), DateTime.Now.ToString("O") + " " + text + Environment.NewLine); } catch { } }
+    private void ShortcutPressed(string source)
+    {
+        if (!_hotkeyRegistered || !Prefs.HotkeyEnabled || !_shortcutGate.Accept(Environment.TickCount64)) return;
+        ActivationLog("received " + source + " " + Hotkeys.Describe(_registeredModifiers, _registeredKey) + $" visible={IsVisible} ready={_ready} modal={_modal} transition={_transitioning} hiding={_hiding}");
+        Toggle();
+    }
     private void UpdateTrayText()
     {
         if (_tray != null) _tray.Text = "Orbit Launchpad · " + (Prefs.HotkeyEnabled ? (_hotkeyRegistered ? Hotkeys.Describe(Prefs.HotkeyModifiers, Prefs.HotkeyVirtualKey) : "快捷鍵註冊失敗，請開啟設定") : "快捷鍵已關閉");
@@ -226,8 +239,8 @@ public sealed partial class LauncherWindow : Window
         else
         {
             _meter.Begin("open"); _transitioning = true;
-            Native.Cloak(_hwnd, true);
-            PositionOnScreen(); Show(); Activate();
+            Opacity = .001;
+            PositionOnScreen(); Show(); Native.Foreground(_hwnd); Activate();
             if (_layoutDirty) { _scene.UpdateLayout(); Refresh(false); }
             AnimateOpen(); Keyboard.Focus(_scene);
         }
@@ -241,26 +254,24 @@ public sealed partial class LauncherWindow : Window
         EventHandler? next = null;
         next = (_, _) => { CompositionTarget.Rendering -= next; ready.TrySetResult(); };
         CompositionTarget.Rendering += next;
-        await ready.Task;
-        await visual.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+        try { await Task.WhenAny(ready.Task, Task.Delay(120)); }
+        finally { CompositionTarget.Rendering -= next; }
+        await visual.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
     }
     private async void AnimateOpen()
     {
         _transitioning = true;
         var scale = new ScaleTransform(1.04, 1.04); _scene.RenderTransform = scale; _scene.RenderTransformOrigin = new Point(.5, .5);
-        _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = .6;
+        _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1;
         await PrepareVisual(_scene);
         if (!IsVisible || _quitting) { _transitioning = false; return; }
-        Native.Cloak(_hwnd, false); Activate();
+        Native.Foreground(_hwnd); Activate();
         _meter.AnimationStarted();
-        Theme.Animate(_scene, OpacityProperty, 1, Prefs.AnimationMs, () =>
+        await FadeWindow(true, Prefs.AnimationMs);
         {
-            _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1;
             _scene.InvalidateVisual(); _canvas.InvalidateVisual();
             _transitioning = false; _meter.End();
-        });
-        Theme.Animate(scale, ScaleTransform.ScaleXProperty, 1, Prefs.AnimationMs);
-        Theme.Animate(scale, ScaleTransform.ScaleYProperty, 1, Prefs.AnimationMs);
+        }
     }
     private async void HideLauncher()
     {
@@ -270,12 +281,26 @@ public sealed partial class LauncherWindow : Window
         await PrepareVisual(_scene);
         if (_quitting) return;
         _meter.AnimationStarted();
-        if (_scene.RenderTransform is ScaleTransform scale)
+        await FadeWindow(false, Prefs.AnimationMs * .85);
+        Hide(); _hiding = false; _meter.End();
+    }
+    private async Task FadeWindow(bool opening, double duration)
+    {
+        var watch = Stopwatch.StartNew();
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scale = _scene.RenderTransform as ScaleTransform;
+        int frames = 0;
+        EventHandler frame = (_, _) =>
         {
-            Theme.Animate(scale, ScaleTransform.ScaleXProperty, 1.045, Prefs.AnimationMs * .75);
-            Theme.Animate(scale, ScaleTransform.ScaleYProperty, 1.045, Prefs.AnimationMs * .75);
-        }
-        Theme.Animate(_scene, OpacityProperty, .4, Prefs.AnimationMs * .75, () => { Native.Cloak(_hwnd, true); Hide(); _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1; _hiding = false; _meter.End(); });
+            double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / Math.Max(100, duration), 0, 1);
+            double ease = opening ? 1 - Math.Pow(1 - progress, 3) : progress * progress;
+            frames++; Opacity = .001 + .998 * (opening ? ease : 1 - ease);
+            if (scale != null) { double size = opening ? 1 + .025 * (1 - ease) : 1 + .025 * ease; scale.ScaleX = size; scale.ScaleY = size; }
+            if (progress >= 1 || _quitting) done.TrySetResult();
+        };
+        CompositionTarget.Rendering += frame;
+        try { await Task.WhenAny(done.Task, Task.Delay((int)duration + 200)); }
+        finally { CompositionTarget.Rendering -= frame; Opacity = opening ? .999 : .001; ActivationLog($"whole-window fade opening={opening} frames={frames} opacity={Opacity} elapsed_ms={watch.ElapsedMilliseconds}"); }
     }
     private void Quit()
     {
@@ -283,6 +308,7 @@ public sealed partial class LauncherWindow : Window
         InputManager.Current.PreProcessInput -= BeforeInput;
         if (_hotkeyRegistered) Native.UnregisterHotKey(_hotkeyReceiver!.Handle, _hotkeyId);
         _hotkeyReceiver?.Dispose();
+        _shortcutFallback?.Dispose();
         _source?.RemoveHook(WindowMessage); _tray?.Dispose();
         System.Windows.Application.Current.Shutdown();
     }

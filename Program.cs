@@ -101,6 +101,8 @@ public static class SelfTests
             using (var zip = System.IO.Compression.ZipFile.Open(malformed, System.IO.Compression.ZipArchiveMode.Create)) { zip.CreateEntry("assets/../outside.txt"); }
             bool rejected = false; try { LayoutArchive.Read(store, malformed); } catch (InvalidDataException) { rejected = true; }
             Check(rejected && store.Library.Items[0].Name == "備份資料夾", "invalid archive paths rejected without replacing current layout");
+            var pulses = new ShortcutPulseGate();
+            Check(pulses.Accept(1000) && !pulses.Accept(1001) && !pulses.Accept(1100) && pulses.Accept(1200), "registered and backup shortcut events toggle only once per press");
             string text = string.Join(Environment.NewLine, checks);
             File.WriteAllText(report ?? Path.Combine(AppContext.BaseDirectory, "self-test.txt"), text);
             return 0;
