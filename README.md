@@ -2,14 +2,20 @@
 
 仿 macOS Launchpad 的 Windows 應用程式啟動器，使用 C#、WPF 與 .NET 10 開發。
 
-本頁對應 **v0.4.3**。添加介面改成小視窗，加入資料夾選擇，並在添加時收起全螢幕背景。
+本頁對應 **v0.5.0**。加入主顯示器或指定螢幕設定，其他螢幕顯示霧玻璃背景，並提供輕量版。
 
 ## 下載與啟動
 
-從 [v0.4.3 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.4.3) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
+從 [v0.5.0 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.5.0) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
 可在 [所有版本](https://github.com/im5033/OrbitLaunchpad/releases) 查看歷史發佈。
 
-此版本提供 Windows x64 完整可攜版，包內附帶所需 .NET 執行環境。
+| 版本 | 使用條件 |
+| --- | --- |
+| Lite 輕量版 | Windows x64，已安裝 .NET Desktop Runtime 10 x64 |
+| Full 完整可攜版 | Windows x64，包內附帶所需 .NET 執行環境 |
+
+兩版提供相同功能。輕量版使用系統共用的執行環境，因此下載較小。
+[Microsoft .NET 10 下載頁](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 首次啟動會讀取桌面及開始功能表的捷徑，建立初始項目。
 佈局與設定儲存在程式旁的 `data` 資料夾。升級時先從系統匣結束舊程式，再替換執行檔並保留 `data`。
@@ -40,6 +46,12 @@
 空白處右鍵 → **添加圖示**。添加小視窗開啟時會收起 Launchpad，方便從檔案總管拖入項目。
 也可按 **選擇檔案** 或 **選擇資料夾**，最後按 **添加** 儲存。
 
+## 顯示器
+
+設定 → **顯示器**，選擇跟隨 Windows 主顯示器或指定已連接螢幕。
+圖示集中在選定螢幕，其他螢幕顯示模糊桌布背景，並同步淡入淡出。
+指定螢幕斷線時暫用主顯示器。
+
 ## 從原始碼建置
 
 使用 Windows x64 與 .NET 10 SDK，在儲存庫根目錄執行。
@@ -65,3 +77,5 @@
 README 與建置腳本已整理成適合此儲存庫的形式，Git 提交與 Release 的建立日期為匯入日期。
 每個 Release 的執行檔取自當時保存的打包檔。
 公開下載包使用乾淨的初始狀態，個人佈局可在使用者自己的電腦匯入。
+
+目前已檢查單螢幕操作、螢幕選擇與斷線回退邏輯，多螢幕及混合 DPI 的實體畫面仍需環境驗證。

@@ -22,6 +22,7 @@ internal static class Native
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
     internal static void Foreground(IntPtr hwnd) { SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x43); SetForegroundWindow(hwnd); }
+    internal static void PlaceWindow(IntPtr hwnd, System.Drawing.Rectangle bounds) => SetWindowPos(hwnd, new IntPtr(-1), bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x10);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool SystemParametersInfo(uint action, uint parameter, StringBuilder value, uint flags);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr handle);

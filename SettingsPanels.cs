@@ -55,6 +55,13 @@ public sealed partial class LauncherWindow
         var startup = Check(general, "登入 Windows 時自動啟動（登錄表，目前使用者）", initialStartup != null);
         var startupNote = Theme.Label("自啟時在背景待命。移動可攜版位置後，重新套用此設定即可更新路徑。", 12, Theme.Muted); startupNote.TextWrapping = TextWrapping.Wrap; general.Children.Add(startupNote);
         var confirm = Check(general, "移除圖示前詢問", Prefs.ConfirmRemoval);
+        var displays = Page("顯示器");
+        displays.Children.Add(Theme.Label("Launchpad 顯示位置", 20));
+        var displayOptions = Displays.Options(Prefs.DisplayDevice);
+        var displayChoice = new ComboBox { ItemsSource = displayOptions, SelectedItem = displayOptions.First(x => string.Equals(x.Device, Prefs.DisplayDevice, StringComparison.OrdinalIgnoreCase)), Margin = new Thickness(0, 20, 0, 18), Padding = new Thickness(8) };
+        displays.Children.Add(displayChoice);
+        var displayNote = Theme.Label("圖示顯示在選定的螢幕，其餘螢幕同步顯示霧玻璃背景。開啟添加視窗時，所有螢幕的 Launchpad 背景都會收起。\n\n指定螢幕未連接時，暫時使用 Windows 主顯示器。", 14, Theme.Muted);
+        displayNote.TextWrapping = TextWrapping.Wrap; displays.Children.Add(displayNote);
         var appearance = Page("佈局與動畫");
         Slider Slider(string label, double value, double min, double max, double step)
         {
@@ -75,13 +82,14 @@ public sealed partial class LauncherWindow
             var old = Prefs; var candidate = JsonSerializer.Deserialize<Preferences>(JsonSerializer.Serialize(old))!;
             candidate.HotkeyEnabled = enabled.IsChecked == true; candidate.HotkeyModifiers = Modifiers(); candidate.HotkeyVirtualKey = ((HotkeyChoice)key.SelectedItem).Code;
             candidate.ConfirmRemoval = confirm.IsChecked == true; candidate.Columns = (int)columns.Value; candidate.Rows = (int)rows.Value; candidate.IconSize = size.Value; candidate.AnimationMs = animation.Value; candidate.ReorderDelayMs = (int)reorder.Value;
+            candidate.DisplayDevice = ((DisplayOption)displayChoice.SelectedItem).Device;
             if (!ConfigureHotkey(candidate.HotkeyEnabled, candidate.HotkeyModifiers, candidate.HotkeyVirtualKey, out string message)) { error.Text = message; return; }
             string? previousStartup = null; bool changedStartup = false;
             try
             {
                 previousStartup = StartupRegistration.Read(); bool wantStartup = startup.IsChecked == true;
                 if (wantStartup ? previousStartup != StartupRegistration.CommandFor(StartupRegistration.Executable) : previousStartup != null) { changedStartup = true; StartupRegistration.Write(wantStartup); }
-                _store.Library.Preferences = candidate; _store.Save(); UpdateTrayText(); CloseFolder(true); dialog.Close(); Refresh(false);
+                _store.Library.Preferences = candidate; _store.Save(); UpdateTrayText(); CloseFolder(true); dialog.Close(); PositionOnScreen(); Refresh(false); ShowFrostWindows();
             }
             catch (Exception ex)
             {

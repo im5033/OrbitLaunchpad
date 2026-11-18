@@ -76,7 +76,7 @@ public sealed partial class LauncherWindow
         {
             _hiding = true;
             await FadeWindow(false, Prefs.AnimationMs * .85);
-            Hide(); _hiding = false;
+            HideFrostWindows(); Hide(); _hiding = false;
             if (!_quitting) dialog.ShowDialog();
         }
         finally

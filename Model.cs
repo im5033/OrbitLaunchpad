@@ -30,6 +30,7 @@ public sealed class Preferences
     public uint HotkeyModifiers { get; set; } = 3;
     public uint HotkeyVirtualKey { get; set; } = 32;
     public bool ConfirmRemoval { get; set; }
+    public string DisplayDevice { get; set; } = "";
 }
 
 public sealed class Library
@@ -105,6 +106,7 @@ public sealed class Store
             }
         }
         var p = Library.Preferences;
+        p.DisplayDevice ??= "";
         if (p.LayoutRevision < 2)
         {
             p.Columns = 7; p.Rows = 4; p.IconSize = 120; p.LayoutRevision = 2;

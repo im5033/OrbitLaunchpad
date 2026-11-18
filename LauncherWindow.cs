@@ -84,6 +84,7 @@ public sealed partial class LauncherWindow : Window
         Content = _surface;
         RenderOptions.SetBitmapScalingMode(_surface, BitmapScalingMode.LowQuality);
         BuildBackground();
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += DisplaySettingsChanged;
         _surface.Children.Add(_scene); _scene.Children.Add(_canvas);
         BuildChrome();
         _surface.Children.Add(_shade); _surface.Children.Add(_folderLayer); _surface.Children.Add(_dragLayer);
@@ -138,6 +139,7 @@ public sealed partial class LauncherWindow : Window
     private void BuildBackground()
     {
         var backdrop = Backdrop.Create(Native.Wallpaper());
+        _backdropImage = backdrop;
         if (backdrop != null)
         {
             _surface.Children.Add(new Image { Source = backdrop, Stretch = Stretch.UniformToFill, IsHitTestVisible = false });
@@ -224,14 +226,6 @@ public sealed partial class LauncherWindow : Window
         if (message == 0x0312 && wparam.ToInt32() == _hotkeyId) { Toggle(); handled = true; }
         return IntPtr.Zero;
     }
-    private void PositionOnScreen()
-    {
-        var screen = Native.CurrentScreen();
-        var dpi = VisualTreeHelper.GetDpi(this);
-        WindowState = WindowState.Normal;
-        Left = screen.Bounds.Left / dpi.DpiScaleX; Top = screen.Bounds.Top / dpi.DpiScaleY;
-        Width = screen.Bounds.Width / dpi.DpiScaleX; Height = screen.Bounds.Height / dpi.DpiScaleY;
-    }
     public void Toggle()
     {
         if (!_ready || _modal || _transitioning || _hiding) return;
@@ -261,6 +255,7 @@ public sealed partial class LauncherWindow : Window
     private async void AnimateOpen()
     {
         _transitioning = true;
+        ShowFrostWindows();
         var scale = new ScaleTransform(1.04, 1.04); _scene.RenderTransform = scale; _scene.RenderTransformOrigin = new Point(.5, .5);
         _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1;
         await PrepareVisual(_scene);
@@ -282,7 +277,7 @@ public sealed partial class LauncherWindow : Window
         if (_quitting) return;
         _meter.AnimationStarted();
         await FadeWindow(false, Prefs.AnimationMs * .85);
-        Hide(); _hiding = false; _meter.End();
+        HideFrostWindows(); Hide(); _hiding = false; _meter.End();
     }
     private async Task FadeWindow(bool opening, double duration)
     {
@@ -295,16 +290,18 @@ public sealed partial class LauncherWindow : Window
             double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / Math.Max(100, duration), 0, 1);
             double ease = opening ? 1 - Math.Pow(1 - progress, 3) : progress * progress;
             frames++; Opacity = .001 + .998 * (opening ? ease : 1 - ease);
+            FadeFrostWindows();
             if (scale != null) { double size = opening ? 1 + .025 * (1 - ease) : 1 + .025 * ease; scale.ScaleX = size; scale.ScaleY = size; }
             if (progress >= 1 || _quitting) done.TrySetResult();
         };
         CompositionTarget.Rendering += frame;
         try { await Task.WhenAny(done.Task, Task.Delay((int)duration + 200)); }
-        finally { CompositionTarget.Rendering -= frame; Opacity = opening ? .999 : .001; ActivationLog($"whole-window fade opening={opening} frames={frames} opacity={Opacity} elapsed_ms={watch.ElapsedMilliseconds}"); }
+        finally { CompositionTarget.Rendering -= frame; Opacity = opening ? .999 : .001; FadeFrostWindows(); ActivationLog($"whole-window fade opening={opening} frames={frames} opacity={Opacity} elapsed_ms={watch.ElapsedMilliseconds}"); }
     }
     private void Quit()
     {
         _quitting = true; Save(); _dragTimer.Stop();
+        CloseFrostWindows();
         InputManager.Current.PreProcessInput -= BeforeInput;
         if (_hotkeyRegistered) Native.UnregisterHotKey(_hotkeyReceiver!.Handle, _hotkeyId);
         _hotkeyReceiver?.Dispose();

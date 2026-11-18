@@ -15,6 +15,11 @@ public static class Program
     public static int Main(string[] args)
     {
         if (args.Contains("--self-test")) return SelfTests.Run(args.SkipWhile(a => a != "--self-test").Skip(1).FirstOrDefault());
+        if (args.Contains("--display-info"))
+        {
+            string report = args.SkipWhile(a => a != "--display-info").Skip(1).FirstOrDefault() ?? Path.Combine(AppContext.BaseDirectory, "display-info.json");
+            File.WriteAllText(report, System.Text.Json.JsonSerializer.Serialize(Displays.Connected(), new System.Text.Json.JsonSerializerOptions { WriteIndented = true })); return 0;
+        }
         _mutex = new Mutex(true, "Local\\OrbitLaunchpad.v1", out bool first);
         _toggle = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\OrbitLaunchpad.Toggle.v1");
         if (!first) { if (!args.Contains("--background")) _toggle.Set(); return 0; }
@@ -103,6 +108,12 @@ public static class SelfTests
             Check(rejected && store.Library.Items[0].Name == "備份資料夾", "invalid archive paths rejected without replacing current layout");
             var pulses = new ShortcutPulseGate();
             Check(pulses.Accept(1000) && !pulses.Accept(1001) && !pulses.Accept(1100) && pulses.Accept(1200), "registered and backup shortcut events toggle only once per press");
+            var monitors = new[] { new DisplayInfo("left", false, new System.Drawing.Rectangle(-1920, 0, 1920, 1080)), new DisplayInfo("main", true, new System.Drawing.Rectangle(0, 0, 2560, 1440)) };
+            Check(Displays.Select(monitors, "").Device == "main", "default display follows Windows primary rather than cursor");
+            Check(Displays.Select(monitors, "left").Bounds.X == -1920 && Displays.Select(monitors, "LEFT").Device == "left", "explicit display selection preserves negative physical coordinates");
+            Check(Displays.Select(monitors, "disconnected").Device == "main", "missing display falls back to primary without changing saved preference");
+            store.Library.Preferences.DisplayDevice = "left"; LayoutArchive.Apply(store, snapshot); store.Save();
+            Check(new Store(testDirectory).Library.Preferences.DisplayDevice == "left", "display preference persists and survives layout restoration");
             string text = string.Join(Environment.NewLine, checks);
             File.WriteAllText(report ?? Path.Combine(AppContext.BaseDirectory, "self-test.txt"), text);
             return 0;
