@@ -59,6 +59,8 @@ public sealed partial class LauncherWindow : Window
     private IntPtr _hwnd;
     private HwndSource? _source;
     private bool _hotkeyRegistered;
+    private HotkeyReceiver? _hotkeyReceiver;
+    private string _hotkeyError = "";
     private int _hotkeyId = 74;
     private uint _registeredModifiers, _registeredKey;
     private List<Entry> ActiveItems => _folder?.Children ?? _store.Library.Items;
@@ -72,7 +74,7 @@ public sealed partial class LauncherWindow : Window
         Title = "Orbit Launchpad"; Background = new SolidColorBrush(Color.FromRgb(10, 13, 27));
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = true;
         Topmost = true; AllowsTransparency = false;
-        Opacity = 0;
+        Opacity = 1;
         FontFamily = new FontFamily("Segoe UI, Microsoft JhengHei UI"); Foreground = Theme.Text;
         Icon = Native.Icon(StartupRegistration.Executable);
         Content = _surface;
@@ -119,7 +121,7 @@ public sealed partial class LauncherWindow : Window
             await Native.WarmIconsAsync(LayoutRules.All(_store.Library.Items));
             if (_quitting) return;
             _scene.UpdateLayout(); Refresh(false); _ready = true;
-            if (_startHidden) { Hide(); Opacity = 1; _meter.End("background-ready"); }
+            if (_startHidden) { Hide(); _meter.End("background-ready"); }
             else AnimateOpen();
             if (store.LoadWarning != null) Toast(store.LoadWarning);
         };
@@ -156,7 +158,15 @@ public sealed partial class LauncherWindow : Window
     private void InitializeNative()
     {
         _hwnd = new WindowInteropHelper(this).Handle;
+        Native.Cloak(_hwnd, true);
         _source = HwndSource.FromHwnd(_hwnd); _source.AddHook(WindowMessage);
+        _hotkeyReceiver = new HotkeyReceiver();
+        _hotkeyReceiver.Pressed += id => Dispatcher.BeginInvoke(() =>
+        {
+            if (id != _hotkeyId) return;
+            ActivationLog("received " + Hotkeys.Describe(_registeredModifiers, _registeredKey) + $" visible={IsVisible} ready={_ready} modal={_modal} transition={_transitioning} hiding={_hiding}");
+            Toggle();
+        });
         bool hotkeyOk = ConfigureHotkey(Prefs.HotkeyEnabled, Prefs.HotkeyModifiers, Prefs.HotkeyVirtualKey, out string hotkeyError);
         _tray = new System.Windows.Forms.NotifyIcon { Visible = true, Text = "Orbit Launchpad", Icon = System.Drawing.Icon.ExtractAssociatedIcon(StartupRegistration.Executable) ?? System.Drawing.SystemIcons.Application };
         _tray.DoubleClick += (_, _) => Dispatcher.Invoke(Toggle);
@@ -166,30 +176,35 @@ public sealed partial class LauncherWindow : Window
         menu.Items.Add("結束 Orbit", null, (_, _) => Dispatcher.Invoke(Quit));
         _tray.ContextMenuStrip = menu;
         UpdateTrayText();
-        if (!hotkeyOk) Dispatcher.BeginInvoke(() => Toast(hotkeyError + " 可透過系統匣開啟設定。"));
+        if (!hotkeyOk) Dispatcher.BeginInvoke(() => { Toast(hotkeyError + " 可透過系統匣開啟設定。"); _tray.ShowBalloonTip(10000, "Orbit 快捷鍵未啟用", hotkeyError, System.Windows.Forms.ToolTipIcon.Warning); });
     }
     private bool ConfigureHotkey(bool enabled, uint modifiers, uint key, out string error)
     {
         error = "";
         if (!enabled)
         {
-            if (_hotkeyRegistered) Native.UnregisterHotKey(_hwnd, _hotkeyId);
-            _hotkeyRegistered = false; return true;
+            if (_hotkeyRegistered) Native.UnregisterHotKey(_hotkeyReceiver!.Handle, _hotkeyId);
+            _hotkeyRegistered = false; _hotkeyError = ""; return true;
         }
         if (!Hotkeys.Valid(modifiers, key)) { error = "請選擇有效的主按鍵。"; return false; }
         if (_hotkeyRegistered && modifiers == _registeredModifiers && key == _registeredKey) return true;
         int nextId = _hotkeyId == 74 ? 75 : 74;
-        if (!Native.RegisterHotKey(_hwnd, nextId, modifiers | 0x4000, key))
+        if (!Native.RegisterHotKey(_hotkeyReceiver!.Handle, nextId, modifiers | 0x4000, key))
         {
-            error = "無法使用「" + Hotkeys.Describe(modifiers, key) + "」；可能已被其他程式使用，或是 Windows 保留組合。原有快捷鍵不變。";
+            int code = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+            error = "無法使用「" + Hotkeys.Describe(modifiers, key) + "」；可能已被其他程式使用，或是 Windows 保留組合（錯誤 " + code + "）。請換一組快捷鍵。";
+            if (!_hotkeyRegistered) _hotkeyError = error;
+            ActivationLog("registration failed " + error);
             return false;
         }
-        if (_hotkeyRegistered) Native.UnregisterHotKey(_hwnd, _hotkeyId);
-        _hotkeyId = nextId; _hotkeyRegistered = true; _registeredModifiers = modifiers; _registeredKey = key; return true;
+        if (_hotkeyRegistered) Native.UnregisterHotKey(_hotkeyReceiver.Handle, _hotkeyId);
+        _hotkeyId = nextId; _hotkeyRegistered = true; _registeredModifiers = modifiers; _registeredKey = key; _hotkeyError = "";
+        ActivationLog("registered " + Hotkeys.Describe(modifiers, key)); return true;
     }
+    private void ActivationLog(string text) { try { File.AppendAllText(Path.Combine(_store.DirectoryPath, "activation.log"), DateTime.Now.ToString("O") + " " + text + Environment.NewLine); } catch { } }
     private void UpdateTrayText()
     {
-        if (_tray != null) _tray.Text = "Orbit Launchpad · " + (Prefs.HotkeyEnabled ? Hotkeys.Describe(Prefs.HotkeyModifiers, Prefs.HotkeyVirtualKey) : "快捷鍵已關閉");
+        if (_tray != null) _tray.Text = "Orbit Launchpad · " + (Prefs.HotkeyEnabled ? (_hotkeyRegistered ? Hotkeys.Describe(Prefs.HotkeyModifiers, Prefs.HotkeyVirtualKey) : "快捷鍵註冊失敗，請開啟設定") : "快捷鍵已關閉");
     }
     private IntPtr WindowMessage(IntPtr hwnd, int message, IntPtr wparam, IntPtr lparam, ref bool handled)
     {
@@ -211,8 +226,7 @@ public sealed partial class LauncherWindow : Window
         else
         {
             _meter.Begin("open"); _transitioning = true;
-            BeginAnimation(OpacityProperty, null); Opacity = 0;
-            _surface.Children.Remove(_scene); _surface.Children.Insert(1, _scene);
+            Native.Cloak(_hwnd, true);
             PositionOnScreen(); Show(); Activate();
             if (_layoutDirty) { _scene.UpdateLayout(); Refresh(false); }
             AnimateOpen(); Keyboard.Focus(_scene);
@@ -234,13 +248,14 @@ public sealed partial class LauncherWindow : Window
     {
         _transitioning = true;
         var scale = new ScaleTransform(1.04, 1.04); _scene.RenderTransform = scale; _scene.RenderTransformOrigin = new Point(.5, .5);
-        _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1;
+        _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = .6;
         await PrepareVisual(_scene);
         if (!IsVisible || _quitting) { _transitioning = false; return; }
+        Native.Cloak(_hwnd, false); Activate();
         _meter.AnimationStarted();
-        Theme.Animate(this, OpacityProperty, 1, Prefs.AnimationMs, () =>
+        Theme.Animate(_scene, OpacityProperty, 1, Prefs.AnimationMs, () =>
         {
-            BeginAnimation(OpacityProperty, null); Opacity = 1;
+            _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1;
             _scene.InvalidateVisual(); _canvas.InvalidateVisual();
             _transitioning = false; _meter.End();
         });
@@ -260,13 +275,14 @@ public sealed partial class LauncherWindow : Window
             Theme.Animate(scale, ScaleTransform.ScaleXProperty, 1.045, Prefs.AnimationMs * .75);
             Theme.Animate(scale, ScaleTransform.ScaleYProperty, 1.045, Prefs.AnimationMs * .75);
         }
-        Theme.Animate(this, OpacityProperty, .001, Prefs.AnimationMs * .75, () => { Hide(); BeginAnimation(OpacityProperty, null); Opacity = 1; _hiding = false; _meter.End(); });
+        Theme.Animate(_scene, OpacityProperty, .4, Prefs.AnimationMs * .75, () => { Native.Cloak(_hwnd, true); Hide(); _scene.BeginAnimation(OpacityProperty, null); _scene.Opacity = 1; _hiding = false; _meter.End(); });
     }
     private void Quit()
     {
         _quitting = true; Save(); _dragTimer.Stop();
         InputManager.Current.PreProcessInput -= BeforeInput;
-        if (_hotkeyRegistered) Native.UnregisterHotKey(_hwnd, _hotkeyId);
+        if (_hotkeyRegistered) Native.UnregisterHotKey(_hotkeyReceiver!.Handle, _hotkeyId);
+        _hotkeyReceiver?.Dispose();
         _source?.RemoveHook(WindowMessage); _tray?.Dispose();
         System.Windows.Application.Current.Shutdown();
     }

@@ -16,7 +16,7 @@ public sealed partial class LauncherWindow
         var outer = new DockPanel { Margin = new Thickness(24) };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         DockPanel.SetDock(buttons, Dock.Bottom); outer.Children.Add(buttons);
-        var error = Theme.Label("", 12, Theme.Accent); error.TextWrapping = TextWrapping.Wrap;
+        var error = Theme.Label(_hotkeyError, 12, Theme.Accent); error.TextWrapping = TextWrapping.Wrap;
         DockPanel.SetDock(error, Dock.Bottom); outer.Children.Add(error);
         var tabs = new TabControl { Background = Theme.Panel }; outer.Children.Add(tabs);
         StackPanel Page(string title)

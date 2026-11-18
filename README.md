@@ -2,11 +2,11 @@
 
 仿 macOS Launchpad 的 Windows 應用程式啟動器，使用 C#、WPF 與 .NET 10 開發。
 
-本頁對應 **v0.4.0**。加入快捷鍵設定、登入自啟、移除確認偏好、佈局備份恢復，並整合空白處右鍵選單。
+本頁對應 **v0.4.1**。使用獨立訊息視窗接收快捷鍵，加入註冊失敗提示並調整首次顯示流程。
 
 ## 下載與啟動
 
-從 [v0.4.0 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.4.0) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
+從 [v0.4.1 Release](https://github.com/im5033/OrbitLaunchpad/releases/tag/v0.4.1) 下載 ZIP，解壓縮後執行 `OrbitLaunchpad.exe`。
 可在 [所有版本](https://github.com/im5033/OrbitLaunchpad/releases) 查看歷史發佈。
 
 此版本提供 Windows x64 完整可攜版，包內附帶所需 .NET 執行環境。

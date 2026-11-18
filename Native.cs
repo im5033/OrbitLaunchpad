@@ -19,6 +19,8 @@ internal static class Native
 {
     [DllImport("user32.dll", SetLastError = true)] internal static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(IntPtr hwnd, int id);
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+    internal static void Cloak(IntPtr hwnd, bool cloak) { int value = cloak ? 1 : 0; DwmSetWindowAttribute(hwnd, 13, ref value, sizeof(int)); }
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool SystemParametersInfo(uint action, uint parameter, StringBuilder value, uint flags);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr handle);
